@@ -102,8 +102,8 @@ pub fn render_stereo(
         Line::from(Span::styled(
             format!(
                 "{}{}",
-                &config.char_set.meter_center_left_active,
-                &config.char_set.meter_center_right_active,
+                config.char_set.meter_center_left_active,
+                config.char_set.meter_center_right_active,
             ),
             config.theme.meter_center_active,
         ))
@@ -111,8 +111,8 @@ pub fn render_stereo(
         Line::from(Span::styled(
             format!(
                 "{}{}",
-                &config.char_set.meter_center_left_inactive,
-                &config.char_set.meter_center_right_inactive
+                config.char_set.meter_center_left_inactive,
+                config.char_set.meter_center_right_inactive
             ),
             config.theme.meter_center_inactive,
         ))
