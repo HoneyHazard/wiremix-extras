@@ -78,6 +78,14 @@ pub struct Opt {
     #[clap(long, conflicts_with = "no_lazy_capture")]
     pub lazy_capture: bool,
 
+    /// Hide the divider line between items
+    #[clap(long, conflicts_with = "show_dividers")]
+    pub no_show_dividers: bool,
+
+    /// Draw a divider line between items
+    #[clap(long, conflicts_with = "no_show_dividers")]
+    pub show_dividers: bool,
+
     #[cfg(debug_assertions)]
     #[clap(short, long)]
     pub dump_events: bool,

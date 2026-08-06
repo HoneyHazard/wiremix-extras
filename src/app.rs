@@ -882,6 +882,7 @@ mod tests {
             tabs: vec![TabKind::Playback],
             lazy_capture: Default::default(),
             filters: Default::default(),
+            show_dividers: Default::default(),
         };
 
         let mut app = App::new(wirehose, event_rx, config);
@@ -983,6 +984,7 @@ mod tests {
             ],
             lazy_capture: Default::default(),
             filters: Default::default(),
+            show_dividers: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);
 
