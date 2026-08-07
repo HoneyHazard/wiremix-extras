@@ -18,6 +18,7 @@ use crate::view;
 pub struct DeviceWidget<'a> {
     device: &'a view::Device,
     selected: bool,
+    hidden: bool,
     config: &'a Config,
 }
 
@@ -25,11 +26,13 @@ impl<'a> DeviceWidget<'a> {
     pub fn new(
         device: &'a view::Device,
         selected: bool,
+        hidden: bool,
         config: &'a Config,
     ) -> Self {
         Self {
             device,
             selected,
+            hidden,
             config,
         }
     }
@@ -132,23 +135,50 @@ impl StatefulWidget for DeviceWidget<'_> {
         let title_area = layout[0];
         let target_area = layout[1];
 
+        let title_style = if self.hidden {
+            self.config
+                .theme
+                .config_device
+                .patch(self.config.theme.row_hidden)
+        } else {
+            self.config.theme.config_device
+        };
+        let hidden_prefix = if self.hidden {
+            Span::styled(&self.config.char_set.hidden_instance, title_style)
+        } else {
+            Span::from("")
+        };
         Line::from(vec![
             Span::from("   "),
-            Span::styled(&self.device.title, self.config.theme.config_device),
+            hidden_prefix,
+            Span::styled(&self.device.title, title_style),
         ])
         .render(title_area, buf);
 
+        let profile_style = if self.hidden {
+            self.config
+                .theme
+                .config_profile
+                .patch(self.config.theme.row_hidden)
+        } else {
+            self.config.theme.config_profile
+        };
+        let dropdown_icon_style = if self.hidden {
+            self.config
+                .theme
+                .dropdown_icon
+                .patch(self.config.theme.row_hidden)
+        } else {
+            self.config.theme.dropdown_icon
+        };
         Line::from(vec![
             Span::from("    "),
             Span::styled(
                 &self.config.char_set.dropdown_icon,
-                self.config.theme.dropdown_icon,
+                dropdown_icon_style,
             ),
             Span::from(" "),
-            Span::styled(
-                &self.device.target_title,
-                self.config.theme.config_profile,
-            ),
+            Span::styled(&self.device.target_title, profile_style),
         ])
         .render(target_area, buf);
 

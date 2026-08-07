@@ -315,6 +315,7 @@ pub struct ObjectListWidget<'a, 'b> {
     pub object_list: &'a mut ObjectList,
     pub view: &'a view::View<'b>,
     pub config: &'a Config,
+    pub hidden_instance: &'a HashSet<ObjectId>,
 }
 
 struct ObjectListRenderContext<'a> {
@@ -348,11 +349,13 @@ impl ObjectListWidget<'_, '_> {
                 .selected
                 .map(|id| id == object.object_id)
                 .unwrap_or_default();
+            let hidden = self.hidden_instance.contains(&object.object_id);
             NodeWidget::new(
                 self.config,
                 self.object_list.device_kind,
                 object,
                 selected,
+                hidden,
             )
             .render(object_area, buf, mouse_areas);
         }
@@ -405,7 +408,8 @@ impl ObjectListWidget<'_, '_> {
                 .selected
                 .map(|id| id == object.object_id)
                 .unwrap_or_default();
-            DeviceWidget::new(object, selected, self.config).render(
+            let hidden = self.hidden_instance.contains(&object.object_id);
+            DeviceWidget::new(object, selected, hidden, self.config).render(
                 object_area,
                 buf,
                 mouse_areas,
@@ -642,6 +646,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -668,6 +673,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -692,6 +698,37 @@ mod tests {
     }
 
     #[test]
+    fn hidden_instance_objects_sink_to_bottom() {
+        let (state, wirehose) = init();
+        let mut hidden = HashSet::new();
+        // Hide two objects out of order - the sunk objects should still
+        // come out in their original relative (object_serial) order at
+        // the bottom, not the order they were inserted into the set.
+        hidden.insert(ObjectId::from_raw_id(5));
+        hidden.insert(ObjectId::from_raw_id(2));
+
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &hidden,
+        );
+
+        let ids: Vec<ObjectId> = view
+            .full_nodes(NodeKind::All)
+            .iter()
+            .map(|node| node.object_id)
+            .collect();
+
+        let expected: Vec<ObjectId> = [1, 3, 4, 6, 7, 8, 9, 10, 2, 5]
+            .into_iter()
+            .map(ObjectId::from_raw_id)
+            .collect();
+        assert_eq!(ids, expected);
+    }
+
+    #[test]
     fn visible_objects_changes_with_scroll() {
         let (state, wirehose) = init();
         let view = View::from(
@@ -699,6 +736,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -756,6 +794,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -815,6 +854,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -867,6 +907,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -936,6 +977,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1028,6 +1070,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1072,6 +1115,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
         );
 
         assert!(view.default_sink.is_some());
@@ -1117,6 +1161,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
         );
 
         assert!(view.default_source.is_some());
