@@ -21,7 +21,6 @@ impl<'de> Deserialize<'de> for NameOverride {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(deny_unknown_fields)]
 struct NameOverrideRaw {
     types: Vec<OverrideType>,
 

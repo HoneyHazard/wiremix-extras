@@ -10,7 +10,6 @@ use crate::config::CharSet;
 
 // This is what actually gets parsed from the config.
 #[derive(Deserialize, Debug)]
-#[serde(deny_unknown_fields)]
 pub struct CharSetOverlay {
     inherit: Option<String>,
     default_device: Option<String>,
@@ -400,13 +399,5 @@ mod tests {
             assert_eq!(char_set.meter_right_active, "$");
             assert_eq!(char_set.meter_left_active, builtin.meter_left_active);
         }
-    }
-
-    #[test]
-    fn unknown_field() {
-        let config = r#"
-        unknown = "unknown"
-        "#;
-        assert!(toml::from_str::<CharSetOverlay>(config).is_err());
     }
 }

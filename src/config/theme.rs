@@ -7,7 +7,6 @@ use crate::config::Theme;
 
 // This is what actually gets parsed from the config.
 #[derive(Deserialize, Debug)]
-#[serde(deny_unknown_fields)]
 pub struct ThemeOverlay {
     inherit: Option<String>,
     default_device: Option<StyleDef>,
@@ -40,7 +39,6 @@ pub struct ThemeOverlay {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(deny_unknown_fields)]
 struct StyleDef {
     pub fg: Option<Color>,
     pub bg: Option<Color>,
@@ -264,22 +262,6 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn unknown_field_theme() {
-        let config = r#"
-        unknown = "unknown"
-        "#;
-        assert!(toml::from_str::<ThemeOverlay>(config).is_err());
-    }
-
-    #[test]
-    fn unknown_field_style() {
-        let config = r#"
-        unknown = "unknown"
-        "#;
-        assert!(toml::from_str::<StyleDef>(config).is_err());
-    }
 
     #[test]
     fn inherit_nonexistent() {
