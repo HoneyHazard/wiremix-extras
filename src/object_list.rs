@@ -201,18 +201,20 @@ impl ObjectList {
     /// Returns a set of object IDs of the visible objects. This includes all
     /// dependencies that affect the display of the objects.
     ///
-    /// See `update()` for why `show_dividers` is needed here.
+    /// See `update()` for why `show_dividers`/`compact_layout` are needed
+    /// here.
     pub fn visible_objects(
         &self,
         area: &Rect,
         view: &view::View,
         show_dividers: bool,
+        compact_layout: bool,
     ) -> HashSet<ObjectId> {
         let objects = view.object_ids(self.list_kind);
 
         let last = cmp::min(
             objects.len(),
-            self.top + self.visible_count(area, show_dividers),
+            self.top + self.visible_count(area, show_dividers, compact_layout),
         );
 
         // Always include object 0 - the global PipeWire state.
@@ -247,7 +249,12 @@ impl ObjectList {
     }
 
     /// Returns the number of objects visible.
-    fn visible_count(&self, area: &Rect, show_dividers: bool) -> usize {
+    fn visible_count(
+        &self,
+        area: &Rect,
+        show_dividers: bool,
+        compact_layout: bool,
+    ) -> usize {
         let (_, list_area, _) = self.areas(area);
         let (spacing, height) = match self.list_kind {
             ListKind::Node(_) => (NodeWidget::spacing(), NodeWidget::height()),
@@ -259,20 +266,31 @@ impl ObjectList {
         // the same +1 in ObjectListWidget::render() and the comment on
         // render_divider() below.
         let spacing = if show_dividers { spacing + 1 } else { spacing };
+        // One fewer row per item - the internal gap between an item's
+        // header/bar rows - when compact_layout is on; see the matching
+        // -1 in ObjectListWidget::render() and NodeWidget/DeviceWidget's
+        // own render() methods.
+        let height = if compact_layout {
+            height.saturating_sub(1)
+        } else {
+            height
+        };
         let full_height = height.saturating_add(spacing);
         (list_area.height / full_height) as usize
     }
 
     /// Reconciles changes to objects, viewport, and selection.
     ///
-    /// `show_dividers` must match `Config::show_dividers`, so that the
-    /// scroll/viewport math here agrees with the extra row `render()`
-    /// reserves per item when dividers are on - see `visible_count()`.
+    /// `show_dividers`/`compact_layout` must match `Config::show_dividers`/
+    /// `Config::compact_layout`, so that the scroll/viewport math here
+    /// agrees with the row adjustments `render()` makes per item for each
+    /// - see `visible_count()`.
     pub fn update(
         &mut self,
         area: Rect,
         view: &view::View,
         show_dividers: bool,
+        compact_layout: bool,
     ) {
         let selected_index = self.selected_index(view).or_else(|| {
             // There's nothing selected! Select the first item and try again.
@@ -282,7 +300,8 @@ impl ObjectList {
 
         let objects_len = view.len(self.list_kind);
 
-        let visible_count = self.visible_count(&area, show_dividers);
+        let visible_count =
+            self.visible_count(&area, show_dividers, compact_layout);
 
         // If objects were removed and the viewport is now below the visible
         // objects, move the viewport up so that the bottom of the object list
@@ -566,6 +585,15 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
         } else {
             spacing
         };
+        // One fewer row per item - the internal gap between an item's
+        // header/bar rows - when compact_layout is on; see the matching
+        // -1 in ObjectList::visible_count() and NodeWidget/DeviceWidget's
+        // own render() methods.
+        let height = if self.config.compact_layout {
+            height.saturating_sub(1)
+        } else {
+            height
+        };
 
         let full_object_height = height.saturating_add(spacing);
         let objects_visible = (list_area.height / full_object_height) as usize;
@@ -744,7 +772,7 @@ mod tests {
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
 
         object_list.up(&view);
-        object_list.update(rect, &view, false);
+        object_list.update(rect, &view, false, false);
         assert_eq!(object_list.top, 0);
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
     }
@@ -775,7 +803,7 @@ mod tests {
             object_list.down(&view);
         }
 
-        object_list.update(rect, &view, false);
+        object_list.update(rect, &view, false, false);
         assert_eq!(object_list.top, 7);
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(10)));
     }
@@ -797,7 +825,7 @@ mod tests {
             ObjectList::new(ListKind::Node(NodeKind::All), None);
 
         // Start at top
-        let visible = object_list.visible_objects(&rect, &view, false);
+        let visible = object_list.visible_objects(&rect, &view, false, false);
         assert_eq!(visible.len(), 4);
         assert!(visible.contains(&ObjectId::from_raw_id(0)));
         assert!(visible.contains(&ObjectId::from_raw_id(1)));
@@ -806,7 +834,7 @@ mod tests {
 
         // Scroll down
         object_list.top = 5;
-        let visible = object_list.visible_objects(&rect, &view, false);
+        let visible = object_list.visible_objects(&rect, &view, false, false);
         assert_eq!(visible.len(), 4);
         assert!(visible.contains(&ObjectId::from_raw_id(0)));
         assert!(visible.contains(&ObjectId::from_raw_id(6)));
@@ -815,7 +843,7 @@ mod tests {
 
         // Scroll up
         object_list.top = 4;
-        let visible = object_list.visible_objects(&rect, &view, false);
+        let visible = object_list.visible_objects(&rect, &view, false, false);
         assert_eq!(visible.len(), 4);
         assert!(visible.contains(&ObjectId::from_raw_id(0)));
         assert!(visible.contains(&ObjectId::from_raw_id(5)));
@@ -843,11 +871,38 @@ mod tests {
         let rect = Rect::new(0, 0, 80, height * 3 + 2);
         let object_list = ObjectList::new(ListKind::Node(NodeKind::All), None);
 
-        let without_dividers = object_list.visible_objects(&rect, &view, false);
-        let with_dividers = object_list.visible_objects(&rect, &view, true);
+        let without_dividers =
+            object_list.visible_objects(&rect, &view, false, false);
+        let with_dividers =
+            object_list.visible_objects(&rect, &view, true, false);
 
         assert_eq!(without_dividers.len(), 4); // 3 items + object 0
         assert_eq!(with_dividers.len(), 3); // 2 items + object 0
+    }
+
+    #[test]
+    fn compact_layout_true_fits_more_rows_per_screen() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        // Exactly enough room for 4 items at compact_layout's shorter
+        // (one row less per item) height, but not enough for a 4th at the
+        // default height - a real terminal-row-count difference between
+        // the two, not just an internal accounting change.
+        let compact_height = NodeWidget::height() - 1 + NodeWidget::spacing();
+        let rect = Rect::new(0, 0, 80, compact_height * 4 + 2);
+        let object_list = ObjectList::new(ListKind::Node(NodeKind::All), None);
+
+        let normal = object_list.visible_objects(&rect, &view, false, false);
+        let compact = object_list.visible_objects(&rect, &view, false, true);
+
+        assert_eq!(normal.len(), 4); // 3 items + object 0
+        assert_eq!(compact.len(), 5); // 4 items + object 0
     }
 
     #[test]
@@ -879,7 +934,7 @@ mod tests {
         let rect = Rect::new(0, 0, 80, height + 2);
         let object_list = ObjectList::new(ListKind::Node(NodeKind::All), None);
 
-        let visible = object_list.visible_objects(&rect, &view, false);
+        let visible = object_list.visible_objects(&rect, &view, false, false);
         assert_eq!(visible.len(), 3);
         assert!(visible.contains(&ObjectId::from_raw_id(0)));
         assert!(visible.contains(&ObjectId::from_raw_id(1)));
@@ -938,7 +993,7 @@ mod tests {
         let rect = Rect::new(0, 0, 80, height + 2);
         let object_list = ObjectList::new(ListKind::Node(NodeKind::All), None);
 
-        let visible = object_list.visible_objects(&rect, &view, false);
+        let visible = object_list.visible_objects(&rect, &view, false, false);
         assert_eq!(visible.len(), 3);
         assert!(visible.contains(&ObjectId::from_raw_id(0)));
         assert!(visible.contains(&ObjectId::from_raw_id(1)));
@@ -990,7 +1045,7 @@ mod tests {
         let object_list =
             ObjectList::new(ListKind::Node(NodeKind::Playback), None);
 
-        let visible = object_list.visible_objects(&rect, &view, false);
+        let visible = object_list.visible_objects(&rect, &view, false, false);
         assert!(visible.contains(&stream_id));
         assert!(visible.contains(&sink_id));
     }
@@ -1059,7 +1114,7 @@ mod tests {
         let object_list =
             ObjectList::new(ListKind::Node(NodeKind::Playback), None);
 
-        let visible = object_list.visible_objects(&rect, &view, false);
+        let visible = object_list.visible_objects(&rect, &view, false, false);
         assert!(visible.contains(&stream_id));
         assert!(visible.contains(&sink_id));
         assert!(visible.contains(&sink_client_id));
@@ -1151,7 +1206,7 @@ mod tests {
         let object_list =
             ObjectList::new(ListKind::Node(NodeKind::Playback), None);
 
-        let visible = object_list.visible_objects(&rect, &view, false);
+        let visible = object_list.visible_objects(&rect, &view, false, false);
         assert!(visible.contains(&stream_id));
         assert!(visible.contains(&sink_id));
         assert!(visible.contains(&sink_device_id));
@@ -1197,7 +1252,7 @@ mod tests {
         let object_list =
             ObjectList::new(ListKind::Node(NodeKind::Playback), None);
 
-        let visible = object_list.visible_objects(&rect, &view, false);
+        let visible = object_list.visible_objects(&rect, &view, false, false);
         assert!(visible.contains(&stream_id));
         assert!(visible.contains(&sink_id));
     }
@@ -1242,7 +1297,7 @@ mod tests {
         let object_list =
             ObjectList::new(ListKind::Node(NodeKind::Recording), None);
 
-        let visible = object_list.visible_objects(&rect, &view, false);
+        let visible = object_list.visible_objects(&rect, &view, false, false);
         assert!(visible.contains(&stream_id));
         assert!(visible.contains(&source_id));
     }

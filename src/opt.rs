@@ -86,6 +86,15 @@ pub struct Opt {
     #[clap(long, conflicts_with = "no_show_dividers")]
     pub show_dividers: bool,
 
+    /// Use a taller, spaced-out layout for each item (the default)
+    #[clap(long, conflicts_with = "compact_layout")]
+    pub no_compact_layout: bool,
+
+    /// Use a shorter, tightly-packed layout for each item, fitting more on
+    /// screen at once
+    #[clap(long, conflicts_with = "no_compact_layout")]
+    pub compact_layout: bool,
+
     #[cfg(debug_assertions)]
     #[clap(short, long)]
     pub dump_events: bool,

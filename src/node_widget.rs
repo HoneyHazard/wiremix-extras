@@ -139,18 +139,23 @@ impl StatefulWidget for NodeWidget<'_> {
         let selector_area = layout[0];
         let node_area = layout[1];
 
-        SelectorWidget::new(self.config, self.selected)
-            .render(selector_area, buf);
+        SelectorWidget::new(
+            self.config,
+            self.selected,
+            self.config.compact_layout,
+        )
+        .render(selector_area, buf);
 
         // Split the main node area into a header line and a line for the
-        // volume bar and peak meter.
+        // volume bar and peak meter. In compact_layout, the two rows sit
+        // directly adjacent - no blank row between them.
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1), // header_area
                 Constraint::Length(1), // bar_area
             ])
-            .spacing(1)
+            .spacing(if self.config.compact_layout { 0 } else { 1 })
             .flex(Flex::Legacy)
             .split(node_area);
         let header_area = layout[0];
@@ -202,36 +207,54 @@ impl StatefulWidget for NodeWidget<'_> {
 struct SelectorWidget<'a> {
     config: &'a Config,
     selected: bool,
+    compact_layout: bool,
 }
 
 impl<'a> SelectorWidget<'a> {
-    fn new(config: &'a Config, selected: bool) -> Self {
-        Self { config, selected }
+    fn new(config: &'a Config, selected: bool, compact_layout: bool) -> Self {
+        Self {
+            config,
+            selected,
+            compact_layout,
+        }
     }
 }
 
 impl Widget for SelectorWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if self.selected {
-            // Render and indication that this is the selected node.
-            let rows = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1),
-                    Constraint::Length(1),
-                    Constraint::Length(1),
-                ])
-                .split(area);
-
+            // Render and indication that this is the selected node. In
+            // compact_layout the item is only 2 rows tall, so there's no
+            // middle row to put selector_middle in - just top and bottom.
             let style = self.config.theme.selector;
 
-            // Render the selected node indicator
-            Span::styled(&self.config.char_set.selector_top, style)
-                .render(rows[0], buf);
-            Span::styled(&self.config.char_set.selector_middle, style)
-                .render(rows[1], buf);
-            Span::styled(&self.config.char_set.selector_bottom, style)
-                .render(rows[2], buf);
+            if self.compact_layout {
+                let rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(1), Constraint::Length(1)])
+                    .split(area);
+
+                Span::styled(&self.config.char_set.selector_top, style)
+                    .render(rows[0], buf);
+                Span::styled(&self.config.char_set.selector_bottom, style)
+                    .render(rows[1], buf);
+            } else {
+                let rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                    ])
+                    .split(area);
+
+                Span::styled(&self.config.char_set.selector_top, style)
+                    .render(rows[0], buf);
+                Span::styled(&self.config.char_set.selector_middle, style)
+                    .render(rows[1], buf);
+                Span::styled(&self.config.char_set.selector_bottom, style)
+                    .render(rows[2], buf);
+            }
         }
     }
 }

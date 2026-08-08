@@ -37,6 +37,12 @@ theme = "default"
 # exactly as it is otherwise.
 show_dividers = false
 
+# If true, remove the blank row between an item's header and volume bar/
+# meter, so each item is one row shorter and more fit on screen at once.
+# Can also be toggled live with the z key. Off by default, matching stock
+# wiremix's layout.
+compact_layout = false
+
 # Initial tab
 tab = "playback"
 
@@ -129,6 +135,8 @@ keybindings = [
  { key = { Char = "0" }, action = { SetAbsoluteVolume = 1.00 } },
  # Open the help menu
  { key = { Char = "?" }, action = "Help" },
+ # Toggle compact_layout
+ { key = { Char = "z" }, action = "ToggleCompactLayout" },
  # There are two actions which don't have default bindings:
  # 1. "Nothing": Do nothing - can effectively delete a default keybinding
  # 2. { SelectTab = N }: Open the Nth tab

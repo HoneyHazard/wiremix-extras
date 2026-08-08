@@ -58,6 +58,7 @@ pub enum Action {
     TabRight,
     SelectTab(usize),
     SetAbsoluteVolume(f32),
+    ToggleCompactLayout,
     #[serde(skip_deserializing)]
     SelectObject(ObjectId),
     #[serde(skip_deserializing)]
@@ -88,6 +89,7 @@ impl std::fmt::Display for Action {
                 Self::format_relative_volume(f, *vol)
             }
             Action::SetDefault => write!(f, "Set default"),
+            Action::ToggleCompactLayout => write!(f, "Toggle compact layout"),
             Action::Help => write!(f, "Show/hide help"),
             Action::Exit => write!(f, "Exit wiremix"),
             Action::Nothing => write!(f, "Nothing"),
@@ -295,12 +297,14 @@ impl<'a> App<'a> {
                 frame.area(),
                 &self.view,
                 self.config.show_dividers,
+                self.config.compact_layout,
             );
 
             let new_visible_objects = current_list!(self).visible_objects(
                 &frame.area(),
                 &self.view,
                 self.config.show_dividers,
+                self.config.compact_layout,
             );
             if new_visible_objects != self.visible_objects {
                 needs_render = true;
@@ -636,6 +640,9 @@ impl Handle for Action {
             Action::SetDefault => {
                 current_list!(app).set_default(&app.view);
             }
+            Action::ToggleCompactLayout => {
+                app.config.compact_layout = !app.config.compact_layout;
+            }
             Action::Exit => {
                 app.exit(None);
             }
@@ -890,6 +897,7 @@ mod tests {
             lazy_capture: Default::default(),
             filters: Default::default(),
             show_dividers: Default::default(),
+            compact_layout: Default::default(),
         };
 
         let mut app = App::new(wirehose, event_rx, config);
@@ -992,6 +1000,7 @@ mod tests {
             lazy_capture: Default::default(),
             filters: Default::default(),
             show_dividers: Default::default(),
+            compact_layout: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);
 
@@ -1279,5 +1288,18 @@ mod tests {
             commands.borrow_mut().pop_front(),
             Some(mock::MockCommand::NodeCaptureStop(id))
         );
+    }
+
+    #[test]
+    fn toggle_compact_layout_flips_config() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        assert!(!app.config.compact_layout);
+
+        Action::ToggleCompactLayout.handle(&mut app).unwrap();
+        assert!(app.config.compact_layout);
+
+        Action::ToggleCompactLayout.handle(&mut app).unwrap();
+        assert!(!app.config.compact_layout);
     }
 }
