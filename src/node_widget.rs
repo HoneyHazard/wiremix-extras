@@ -213,8 +213,8 @@ impl StatefulWidget for NodeWidget<'_> {
             // inactive-looking placeholder even though nothing is actually
             // being sampled, which reads as broken rather than intentionally
             // off. Leave meter_area untouched instead.
-            let monitoring_suspended =
-                self.hidden && !self.config.capture_hidden;
+            let hidden = self.hidden_instance || self.hidden_permanent;
+            let monitoring_suspended = hidden && !self.config.capture_hidden;
             if !monitoring_suspended {
                 MeterWidget::new(self.config, self.node)
                     .render(meter_area, buf);
@@ -601,10 +601,10 @@ mod tests {
     fn non_blank_cells(config: &Config, node: &view::Node) -> usize {
         let area = Rect::new(0, 0, 20, 3);
         let mut buf = Buffer::empty(area);
-        // hidden is true in both compared renders below, so the "[hide] "
-        // title prefix is present either way - only capture_hidden
-        // differs, isolating the meter's own contribution.
-        NodeWidget::new(config, None, node, false, true).render(
+        // hidden_instance is true in both compared renders below, so the
+        // "[hide] " title prefix is present either way - only
+        // capture_hidden differs, isolating the meter's own contribution.
+        NodeWidget::new(config, None, node, false, true, false).render(
             area,
             &mut buf,
             &mut Vec::new(),
