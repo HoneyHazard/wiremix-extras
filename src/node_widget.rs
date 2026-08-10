@@ -745,3 +745,118 @@ impl Widget for MeterWidget<'_> {
         self.node.peaks_dirty.store(false, Ordering::Relaxed);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config;
+    use crate::wirehose::ObjectId;
+    use std::sync::atomic::AtomicBool;
+
+    fn test_node(positions: Option<Vec<u32>>, volumes: Vec<f32>) -> view::Node {
+        view::Node {
+            object_id: ObjectId::from_raw_id(1),
+            object_serial: 1,
+            name: String::from("Test node"),
+            title: String::from("Test node"),
+            media_class: String::from("Stream/Output/Audio"),
+            routes: None,
+            target_title: String::new(),
+            target: None,
+            volumes,
+            mute: false,
+            peaks: None,
+            peaks_dirty: std::sync::Arc::new(AtomicBool::new(false)),
+            positions,
+            device_info: None,
+            is_default_sink: false,
+            is_default_source: false,
+            client_id: None,
+        }
+    }
+
+    fn render_to_string(config: &Config, node: &view::Node) -> String {
+        let area = Rect::new(0, 0, 40, 1);
+        let mut buf = Buffer::empty(area);
+        render_volume(config, node, area, &mut buf, &mut Vec::new());
+        let mut line = String::new();
+        for x in 0..area.width {
+            line.push_str(buf.cell((x, 0)).map(|c| c.symbol()).unwrap_or(" "));
+        }
+        line
+    }
+
+    #[test]
+    fn stereo_pair_finds_the_first_named_lr_pair() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        assert_eq!(stereo_pair(&node), Some((0, 1)));
+    }
+
+    #[test]
+    fn stereo_pair_none_without_positions() {
+        let node = test_node(None, vec![1.0, 0.0]);
+        assert_eq!(stereo_pair(&node), None);
+    }
+
+    #[test]
+    fn stereo_pair_none_for_generic_aux_channels() {
+        let aux0 = libspa_sys::SPA_AUDIO_CHANNEL_AUX0;
+        let aux1 = libspa_sys::SPA_AUDIO_CHANNEL_AUX1;
+        let node = test_node(Some(vec![aux0, aux1]), vec![1.0, 0.0]);
+        assert_eq!(stereo_pair(&node), None);
+    }
+
+    #[test]
+    fn show_channel_volumes_off_renders_single_averaged_bar() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        // Left at 100%, right at 0% (raw linear volumes, i.e. the cubes of
+        // the displayed percentages) - VolumeWidget's existing behavior
+        // (untouched by this feature) averages the *raw* values first
+        // (mean 0.5) and only then takes the cube root for display:
+        // cbrt(0.5) * 100 ~= 79%, not a 50/50 average of the displayed
+        // percentages themselves.
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        let config = config::Config::from_toml_str("");
+
+        let rendered = render_to_string(&config, &node);
+
+        // Single combined label, not two independent ones.
+        assert!(rendered.contains("79%"));
+        assert!(!rendered.contains("100%"));
+        assert!(!rendered.contains("0%"));
+    }
+
+    #[test]
+    fn show_channel_volumes_on_renders_independent_percentages() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        let config =
+            config::Config::from_toml_str("show_channel_volumes = true");
+
+        let rendered = render_to_string(&config, &node);
+
+        // Both channels' real values show up independently - not a 50%
+        // average masking the actual 100%/0% split.
+        assert!(rendered.contains("100%"));
+        assert!(rendered.contains("0%"));
+        assert!(!rendered.contains("50%"));
+    }
+
+    #[test]
+    fn show_channel_volumes_on_without_a_pair_falls_back_to_single_bar() {
+        // Mono - nothing to pair, so this must render exactly like the
+        // option was off, even though it's enabled.
+        let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
+        let node = test_node(Some(vec![mono]), vec![0.5_f32.powi(3)]);
+        let config =
+            config::Config::from_toml_str("show_channel_volumes = true");
+
+        let rendered = render_to_string(&config, &node);
+
+        assert!(rendered.contains("50%"));
+    }
+}
