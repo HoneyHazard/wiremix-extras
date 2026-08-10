@@ -794,9 +794,10 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
 }
 
 /// A single channel's volume bar within Channel mode's stacked-row
-/// display - one line, independently addressable, labeled with its raw
-/// channel index (see `NOTES-multichannel.md` §6 on why a friendlier
-/// L/R-style label is deliberately out of scope for now).
+/// display - one line, independently addressable, labeled with its real
+/// channel name (`FL`, `AUX0`, ...) via `channel_pairing::channel_name`
+/// when `positions` data is available, falling back to the raw channel
+/// index otherwise.
 struct ChannelRowWidget<'a> {
     config: &'a Config,
     node: &'a view::Node,
@@ -828,8 +829,8 @@ impl StatefulWidget for ChannelRowWidget<'_> {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(6), // volume_label, e.g. "0 100%"
-                Constraint::Min(0),    // volume_bar
+                Constraint::Length(10), // volume_label, e.g. "AUX63 100%"
+                Constraint::Min(0),     // volume_bar
             ])
             .spacing(1)
             .split(area);
@@ -845,9 +846,16 @@ impl StatefulWidget for ChannelRowWidget<'_> {
             .cbrt();
         let percent = (volume * 100.0).round() as u32;
         let channel_index = self.channel_index;
+        let label = self
+            .node
+            .positions
+            .as_ref()
+            .and_then(|positions| positions.get(channel_index))
+            .map(|&position| channel_pairing::channel_name(position))
+            .unwrap_or_else(|| channel_index.to_string());
 
         Line::from(Span::styled(
-            format!("{channel_index} {percent}%"),
+            format!("{label} {percent}%"),
             self.config.theme.volume,
         ))
         .alignment(Alignment::Right)
@@ -869,8 +877,7 @@ impl StatefulWidget for ChannelRowWidget<'_> {
         .render(volume_bar, buf);
 
         if self.node.mute {
-            Line::from(format!("{channel_index} muted"))
-                .render(volume_label, buf);
+            Line::from(format!("{label} muted")).render(volume_label, buf);
         }
 
         mouse_areas.push((
@@ -1140,8 +1147,32 @@ mod tests {
         let lines = render_node_lines(&config, &node, true, false, None);
 
         assert_eq!(lines.len(), 3); // header + 2 channel rows
+        assert!(lines[1].contains("FL 100%"));
+        assert!(lines[2].contains("FR 0%"));
+    }
+
+    #[test]
+    fn channel_mode_labels_fall_back_to_index_without_positions() {
+        let node = test_node(None, vec![1.0, 0.0]);
+        let config = config::Config::from_toml_str("");
+
+        let lines = render_node_lines(&config, &node, true, false, None);
+
         assert!(lines[1].contains("0 100%"));
         assert!(lines[2].contains("1 0%"));
+    }
+
+    #[test]
+    fn channel_mode_labels_aux_channels_by_number() {
+        let aux0 = libspa_sys::SPA_AUDIO_CHANNEL_AUX0;
+        let aux1 = libspa_sys::SPA_AUDIO_CHANNEL_AUX1;
+        let node = test_node(Some(vec![aux0, aux1]), vec![1.0, 0.0]);
+        let config = config::Config::from_toml_str("");
+
+        let lines = render_node_lines(&config, &node, true, false, None);
+
+        assert!(lines[1].contains("AUX0 100%"));
+        assert!(lines[2].contains("AUX1 0%"));
     }
 
     #[test]

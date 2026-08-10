@@ -78,6 +78,62 @@ const LR_PAIRS: &[(u32, u32)] = &[
     ),
 ];
 
+/// A short, human-readable name for a single `enum spa_audio_channel`
+/// value, for labeling individual channel rows in Channel mode display.
+/// Named channels (including every `LR_PAIRS` entry) get their real
+/// abbreviation straight from the enum's own doc comments in
+/// spa/param/audio/raw.h (`FL`, `FR`, `LFE`, ...); the generic
+/// `AUX0`..`AUX63` range gets a computed `AUX{n}` since there's no fixed
+/// name to look up; anything else (`UNKNOWN`/`NA`, or a future value this
+/// list hasn't caught up to) falls back to `?`.
+pub fn channel_name(position: u32) -> String {
+    match position {
+        libspa_sys::SPA_AUDIO_CHANNEL_MONO => "MONO".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_FL => "FL".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_FR => "FR".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_FC => "FC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_LFE => "LFE".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_SL => "SL".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_SR => "SR".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_FLC => "FLC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_FRC => "FRC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_RC => "RC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_RL => "RL".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_RR => "RR".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_TC => "TC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_TFL => "TFL".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_TFC => "TFC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_TFR => "TFR".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_TRL => "TRL".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_TRC => "TRC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_TRR => "TRR".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_RLC => "RLC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_RRC => "RRC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_FLW => "FLW".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_FRW => "FRW".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_LFE2 => "LFE2".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_FLH => "FLH".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_FCH => "FCH".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_FRH => "FRH".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_TFLC => "TFLC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_TFRC => "TFRC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_TSL => "TSL".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_TSR => "TSR".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_LLFE => "LLFE".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_RLFE => "RLFE".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_BC => "BC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_BLC => "BLC".to_string(),
+        libspa_sys::SPA_AUDIO_CHANNEL_BRC => "BRC".to_string(),
+        p if (libspa_sys::SPA_AUDIO_CHANNEL_START_Aux
+            ..=libspa_sys::SPA_AUDIO_CHANNEL_LAST_Aux)
+            .contains(&p) =>
+        {
+            format!("AUX{}", p - libspa_sys::SPA_AUDIO_CHANNEL_START_Aux)
+        }
+        _ => "?".to_string(),
+    }
+}
+
 fn lr_partner(channel: u32) -> Option<(u32, bool)> {
     LR_PAIRS.iter().find_map(|&(l, r)| {
         if channel == l {
@@ -227,5 +283,30 @@ mod tests {
             group_channels(&[FL, FL, FR]),
             vec![ChannelGroup::Pair(0, 2), ChannelGroup::Single(1)]
         );
+    }
+
+    #[test]
+    fn channel_name_covers_named_channels() {
+        assert_eq!(channel_name(FL), "FL");
+        assert_eq!(channel_name(FR), "FR");
+        assert_eq!(channel_name(MONO), "MONO");
+        assert_eq!(channel_name(FC), "FC");
+        assert_eq!(channel_name(LFE), "LFE");
+        assert_eq!(channel_name(LFE2), "LFE2");
+        assert_eq!(channel_name(RL), "RL");
+        assert_eq!(channel_name(RR), "RR");
+    }
+
+    #[test]
+    fn channel_name_formats_aux_range_with_computed_offset() {
+        assert_eq!(channel_name(AUX0), "AUX0");
+        assert_eq!(channel_name(AUX1), "AUX1");
+        assert_eq!(channel_name(libspa_sys::SPA_AUDIO_CHANNEL_AUX63), "AUX63");
+    }
+
+    #[test]
+    fn channel_name_falls_back_for_unknown_values() {
+        assert_eq!(channel_name(libspa_sys::SPA_AUDIO_CHANNEL_UNKNOWN), "?");
+        assert_eq!(channel_name(libspa_sys::SPA_AUDIO_CHANNEL_NA), "?");
     }
 }
