@@ -68,6 +68,11 @@ pub enum Action {
     /// own current value - the per-channel counterpart to
     /// `SetRelativeVolume`, which adjusts every channel together instead.
     SetChannelRelativeVolume(usize, f32),
+    /// Toggles "Channel mode": whether keyboard navigation and volume keys
+    /// (`SetAbsoluteVolume`/`SetRelativeVolume`) target the whole selected
+    /// node together, or step through and adjust its channels one at a
+    /// time. See the multichannel design notes, §7.3/§7.4.
+    ToggleChannelMode,
     #[serde(skip_deserializing)]
     SelectObject(ObjectId),
     #[serde(skip_deserializing)]
@@ -107,6 +112,7 @@ impl std::fmt::Display for Action {
             Action::SetChannelRelativeVolume(channel, vol) => {
                 Self::format_channel_relative_volume(f, *channel, *vol)
             }
+            Action::ToggleChannelMode => write!(f, "Toggle channel mode"),
             Action::SetDefault => write!(f, "Set default"),
             Action::Help => write!(f, "Show/hide help"),
             Action::Exit => write!(f, "Exit wiremix"),
@@ -655,11 +661,21 @@ impl Handle for Action {
             Action::ToggleMute => {
                 current_list!(app).toggle_mute(&app.view);
             }
+            Action::ToggleChannelMode => {
+                current_list!(app).toggle_channel_mode(&app.view);
+            }
             Action::SetAbsoluteVolume(volume) => {
                 let max = app
                     .config
                     .enforce_max_volume
                     .then_some(app.config.max_volume_percent);
+                // In channel mode, the whole-node volume keys target only
+                // the currently-cursored channel instead - see §7.4.
+                if let Some(channel) = current_list!(app).selected_channel {
+                    return Ok(current_list!(app).set_channel_absolute_volume(
+                        &app.view, channel, volume, max,
+                    ));
+                }
                 current_list!(app).set_absolute_volume(&app.view, volume, max);
                 return Ok(current_list!(app)
                     .set_absolute_volume(&app.view, volume, max));
@@ -677,6 +693,11 @@ impl Handle for Action {
                 // Relative decreases have no maximum.
                 let max = (volume > 0.0 && app.config.enforce_max_volume)
                     .then_some(app.config.max_volume_percent);
+                if let Some(channel) = current_list!(app).selected_channel {
+                    return Ok(current_list!(app).set_channel_relative_volume(
+                        &app.view, channel, volume, max,
+                    ));
+                }
                 return Ok(current_list!(app)
                     .set_relative_volume(&app.view, volume, max));
             }
@@ -1262,6 +1283,38 @@ mod tests {
         assert!(!Action::SetChannelAbsoluteVolume(2, 0.90)
             .handle(&mut app)
             .unwrap());
+    }
+
+    #[test]
+    fn channel_mode_routes_whole_node_volume_keys_to_selected_channel() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        app.config.enforce_max_volume = false;
+
+        // Selecting a channel index past the fixture node's own channel
+        // count proves the whole-node volume keys really did redirect to
+        // the per-channel path - the whole-node path (`View::volume`) has
+        // no such bound to fail on, only `View::channel_volume` does.
+        app.tabs[app.current_tab_index].list.selected_channel = Some(2);
+
+        assert!(!Action::SetRelativeVolume(0.10).handle(&mut app).unwrap());
+        assert!(!Action::SetAbsoluteVolume(0.90).handle(&mut app).unwrap());
+    }
+
+    #[test]
+    fn channel_mode_whole_node_volume_keys_enforce_max_per_channel() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        app.config.max_volume_percent = 100.0;
+        app.config.enforce_max_volume = true;
+        app.tabs[app.current_tab_index].list.selected_channel = Some(0);
+
+        // Channel 0 is at 100% already.
+        assert!(!Action::SetRelativeVolume(0.10).handle(&mut app).unwrap());
+        assert!(!Action::SetAbsoluteVolume(1.10).handle(&mut app).unwrap());
+
+        assert!(Action::SetRelativeVolume(-0.10).handle(&mut app).unwrap());
+        assert!(Action::SetAbsoluteVolume(0.90).handle(&mut app).unwrap());
     }
 
     #[test]

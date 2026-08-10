@@ -39,6 +39,15 @@ pub struct ObjectList {
     pub dropdown_state: ListState,
     /// Targets
     pub targets: Vec<(view::Target, String)>,
+    /// Whether keyboard navigation and volume actions target individual
+    /// channels of the selected node instead of the whole node together.
+    /// See `selected_channel`.
+    pub channel_mode: bool,
+    /// Which channel of the selected node is targeted. Only meaningful
+    /// while `channel_mode` is on; `None` whenever `channel_mode` is off,
+    /// or the selected object has fewer than two channels to cycle
+    /// through (nothing to individually target).
+    pub selected_channel: Option<usize>,
 }
 
 impl ObjectList {
@@ -55,23 +64,83 @@ impl ObjectList {
     pub fn down(&mut self, view: &view::View) {
         if self.dropdown_state.selected().is_some() {
             self.dropdown_state.select_next();
-        } else {
-            let new_selected = view.next_id(self.list_kind, self.selected);
-            if new_selected.is_some() {
-                self.select(new_selected);
+            return;
+        }
+
+        // In channel mode, step to the selected node's next channel before
+        // advancing to the next node - the channel cursor folds into the
+        // same up/down navigation stream rather than needing its own keys.
+        if let (Some(object_id), Some(channel)) =
+            (self.selected, self.selected_channel)
+        {
+            if channel.saturating_add(1) < self.channel_count(view, object_id) {
+                self.selected_channel = Some(channel + 1);
+                return;
             }
+        }
+
+        let new_selected = view.next_id(self.list_kind, self.selected);
+        if new_selected.is_some() {
+            self.select(view, new_selected);
         }
     }
 
     pub fn up(&mut self, view: &view::View) {
         if self.dropdown_state.selected().is_some() {
             self.dropdown_state.select_previous();
-        } else {
-            let new_selected = view.previous_id(self.list_kind, self.selected);
-            if new_selected.is_some() {
-                self.select(new_selected);
+            return;
+        }
+
+        if let Some(channel) = self.selected_channel {
+            if channel > 0 {
+                self.selected_channel = Some(channel - 1);
+                return;
             }
         }
+
+        let new_selected = view.previous_id(self.list_kind, self.selected);
+        if new_selected.is_some() {
+            self.select(view, new_selected);
+        }
+    }
+
+    /// Toggles whether keyboard navigation and volume actions target
+    /// individual channels of the selected node ("Channel mode" - see the
+    /// multichannel design notes) instead of the whole node together.
+    pub fn toggle_channel_mode(&mut self, view: &view::View) {
+        self.channel_mode = !self.channel_mode;
+        self.selected_channel = self.initial_channel(view, self.selected);
+    }
+
+    /// Number of channels the given object has to cycle through in channel
+    /// mode. Always 0 for devices - device rows don't carry per-channel
+    /// volume data the way nodes do.
+    fn channel_count(&self, view: &view::View, object_id: ObjectId) -> usize {
+        if matches!(self.list_kind, ListKind::Device) {
+            return 0;
+        }
+        view.nodes
+            .get(&object_id)
+            .map_or(0, |node| node.volumes.len())
+    }
+
+    /// The channel a newly-selected object should start on: channel 0 if
+    /// channel mode is active and the object has more than one channel to
+    /// cycle through, `None` otherwise (including when channel mode is
+    /// off). Always lands on the first channel regardless of navigation
+    /// direction - a symmetric "arrive on the last channel when moving up
+    /// into a node" refinement is a reasonable follow-up, not required for
+    /// a working first version.
+    fn initial_channel(
+        &self,
+        view: &view::View,
+        object_id: Option<ObjectId>,
+    ) -> Option<usize> {
+        if !self.channel_mode {
+            return None;
+        }
+        let object_id = object_id?;
+        (self.channel_count(view, object_id) > 1).then_some(0)
     }
 
     fn dropdown_open(&mut self, view: &view::View) {
@@ -232,8 +301,9 @@ impl ObjectList {
             .and_then(|selected| view.position(self.list_kind, selected))
     }
 
-    fn select(&mut self, object_id: Option<ObjectId>) {
+    fn select(&mut self, view: &view::View, object_id: Option<ObjectId>) {
         self.selected = object_id;
+        self.selected_channel = self.initial_channel(view, object_id);
         // Close the dropdown in case it is open for the previously-selected
         // object. This can happen when the object is removed from PipeWire
         // while the dropdown is open.
@@ -300,7 +370,7 @@ impl ObjectList {
     pub fn update(&mut self, area: Rect, view: &view::View) {
         let selected_index = self.selected_index(view).or_else(|| {
             // There's nothing selected! Select the first item and try again.
-            self.select(view.next_id(self.list_kind, None));
+            self.select(view, view.next_id(self.list_kind, None));
             self.selected_index(view)
         });
 
@@ -334,7 +404,7 @@ impl ObjectList {
                         self.top = selected_index;
                     }
                 }
-                None => self.select(None), // The selected object is gone!
+                None => self.select(view, None), // The selected object is gone!
             }
         }
     }
@@ -731,6 +801,164 @@ mod tests {
         object_list.update(rect, &view);
         assert_eq!(object_list.top, 7);
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(10)));
+    }
+
+    #[test]
+    fn channel_mode_down_cycles_channels_before_advancing_node() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.channel_mode = true;
+
+        // Selecting the first object lands on its first channel - every
+        // `init()` node has 2 channels.
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
+        assert_eq!(object_list.selected_channel, Some(0));
+
+        // Down again steps to channel 1 of the same node.
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
+        assert_eq!(object_list.selected_channel, Some(1));
+
+        // Down again, past the last channel, advances to the next node and
+        // resets to its first channel.
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(2)));
+        assert_eq!(object_list.selected_channel, Some(0));
+    }
+
+    #[test]
+    fn channel_mode_up_cycles_channels_before_receding_node() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.channel_mode = true;
+
+        // Walk down to node 2, channel 1.
+        object_list.down(&view);
+        object_list.down(&view);
+        object_list.down(&view);
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(2)));
+        assert_eq!(object_list.selected_channel, Some(1));
+
+        // Up steps back to channel 0 of the same node.
+        object_list.up(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(2)));
+        assert_eq!(object_list.selected_channel, Some(0));
+
+        // Up again recedes to the previous node, landing on its first
+        // channel (not its last - see `initial_channel`'s doc comment for
+        // why this isn't direction-symmetric yet).
+        object_list.up(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
+        assert_eq!(object_list.selected_channel, Some(0));
+    }
+
+    #[test]
+    fn channel_mode_skips_cycling_for_single_channel_node() {
+        let mut state = State::default();
+        let wirehose = mock::WirehoseHandle::default();
+
+        let mono_id = ObjectId::from_raw_id(1);
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Mono node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_media_name(String::from("Media name"));
+        props.set_node_name(String::from("mono"));
+        props.set_object_serial(1);
+        state.update(StateEvent::NodeProperties {
+            object_id: mono_id,
+            props,
+        });
+        state.update(StateEvent::NodeVolumes {
+            object_id: mono_id,
+            volumes: vec![0.0],
+        });
+        state.update(StateEvent::NodeMute {
+            object_id: mono_id,
+            mute: false,
+        });
+
+        let stereo_id = ObjectId::from_raw_id(2);
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Stereo node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_media_name(String::from("Media name"));
+        props.set_node_name(String::from("stereo"));
+        props.set_object_serial(2);
+        state.update(StateEvent::NodeProperties {
+            object_id: stereo_id,
+            props,
+        });
+        state.update(StateEvent::NodeVolumes {
+            object_id: stereo_id,
+            volumes: vec![0.0, 0.0],
+        });
+        state.update(StateEvent::NodeMute {
+            object_id: stereo_id,
+            mute: false,
+        });
+
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.channel_mode = true;
+
+        // The mono node has nothing to cycle through.
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(mono_id));
+        assert_eq!(object_list.selected_channel, None);
+
+        // Down again moves straight to the next (stereo) node, which does.
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(stereo_id));
+        assert_eq!(object_list.selected_channel, Some(0));
+    }
+
+    #[test]
+    fn toggle_channel_mode_sets_initial_channel_for_current_selection() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.down(&view);
+        assert_eq!(object_list.selected_channel, None);
+
+        object_list.toggle_channel_mode(&view);
+        assert!(object_list.channel_mode);
+        assert_eq!(object_list.selected_channel, Some(0));
+
+        object_list.toggle_channel_mode(&view);
+        assert!(!object_list.channel_mode);
+        assert_eq!(object_list.selected_channel, None);
     }
 
     #[test]
