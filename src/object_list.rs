@@ -81,7 +81,7 @@ impl ObjectList {
 
         let new_selected = view.next_id(self.list_kind, self.selected);
         if new_selected.is_some() {
-            self.select(view, new_selected);
+            self.select(view, new_selected, false);
         }
     }
 
@@ -100,7 +100,11 @@ impl ObjectList {
 
         let new_selected = view.previous_id(self.list_kind, self.selected);
         if new_selected.is_some() {
-            self.select(view, new_selected);
+            // Arriving via `up()` lands on the *last* channel, mirroring
+            // how `down()` lands on the first - so up/down are exact
+            // reverses of each other rather than both always landing on
+            // channel 0.
+            self.select(view, new_selected, true);
         }
     }
 
@@ -109,7 +113,8 @@ impl ObjectList {
     /// multichannel design notes) instead of the whole node together.
     pub fn toggle_channel_mode(&mut self, view: &view::View) {
         self.channel_mode = !self.channel_mode;
-        self.selected_channel = self.initial_channel(view, self.selected);
+        self.selected_channel =
+            self.initial_channel(view, self.selected, false);
     }
 
     /// Number of channels the given object has to cycle through in channel
@@ -124,23 +129,28 @@ impl ObjectList {
             .map_or(0, |node| node.volumes.len())
     }
 
-    /// The channel a newly-selected object should start on: channel 0 if
-    /// channel mode is active and the object has more than one channel to
-    /// cycle through, `None` otherwise (including when channel mode is
-    /// off). Always lands on the first channel regardless of navigation
-    /// direction - a symmetric "arrive on the last channel when moving up
-    /// into a node" refinement is a reasonable follow-up, not required for
-    /// a working first version.
+    /// The channel a newly-selected object should start on, if channel
+    /// mode is active and the object has more than one channel to cycle
+    /// through - `None` otherwise (including whenever channel mode is
+    /// off). `from_end` picks which end: `false` for the first channel
+    /// (landing via `down()`, or any non-directional selection), `true`
+    /// for the last (landing via `up()`, so up/down are exact reverses of
+    /// each other instead of both always landing on channel 0).
     fn initial_channel(
         &self,
         view: &view::View,
         object_id: Option<ObjectId>,
+        from_end: bool,
     ) -> Option<usize> {
         if !self.channel_mode {
             return None;
         }
         let object_id = object_id?;
-        (self.channel_count(view, object_id) > 1).then_some(0)
+        let count = self.channel_count(view, object_id);
+        if count <= 1 {
+            return None;
+        }
+        Some(if from_end { count - 1 } else { 0 })
     }
 
     fn dropdown_open(&mut self, view: &view::View) {
@@ -301,9 +311,14 @@ impl ObjectList {
             .and_then(|selected| view.position(self.list_kind, selected))
     }
 
-    fn select(&mut self, view: &view::View, object_id: Option<ObjectId>) {
+    fn select(
+        &mut self,
+        view: &view::View,
+        object_id: Option<ObjectId>,
+        from_end: bool,
+    ) {
         self.selected = object_id;
-        self.selected_channel = self.initial_channel(view, object_id);
+        self.selected_channel = self.initial_channel(view, object_id, from_end);
         // Close the dropdown in case it is open for the previously-selected
         // object. This can happen when the object is removed from PipeWire
         // while the dropdown is open.
@@ -397,7 +412,7 @@ impl ObjectList {
     pub fn update(&mut self, area: Rect, view: &view::View) {
         let selected_index = self.selected_index(view).or_else(|| {
             // There's nothing selected! Select the first item and try again.
-            self.select(view, view.next_id(self.list_kind, None));
+            self.select(view, view.next_id(self.list_kind, None), false);
             self.selected_index(view)
         });
 
@@ -431,7 +446,7 @@ impl ObjectList {
                         self.top = selected_index;
                     }
                 }
-                None => self.select(view, None), // The selected object is gone!
+                None => self.select(view, None, false), // The selected object is gone!
             }
         }
     }
@@ -906,12 +921,45 @@ mod tests {
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(2)));
         assert_eq!(object_list.selected_channel, Some(0));
 
-        // Up again recedes to the previous node, landing on its first
-        // channel (not its last - see `initial_channel`'s doc comment for
-        // why this isn't direction-symmetric yet).
+        // Up again recedes to the previous node, landing on its *last*
+        // channel - up/down are exact reverses of each other.
         object_list.up(&view);
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
-        assert_eq!(object_list.selected_channel, Some(0));
+        assert_eq!(object_list.selected_channel, Some(1));
+    }
+
+    #[test]
+    fn channel_mode_up_and_down_are_exact_reverses() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.channel_mode = true;
+
+        // Walk down 5 steps, recording (selected, selected_channel) after
+        // each one.
+        let mut visited = Vec::new();
+        for _ in 0..5 {
+            object_list.down(&view);
+            visited.push((object_list.selected, object_list.selected_channel));
+        }
+
+        // Walking back up the same number of steps should retrace exactly
+        // the same sequence of (node, channel) pairs, in reverse, ending
+        // one step before the final down() landed.
+        for expected in visited[..4].iter().rev() {
+            object_list.up(&view);
+            assert_eq!(
+                (object_list.selected, object_list.selected_channel),
+                *expected
+            );
+        }
     }
 
     #[test]
