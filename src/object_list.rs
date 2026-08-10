@@ -319,7 +319,8 @@ impl ObjectList {
     ) -> HashSet<ObjectId> {
         let objects = view.object_ids(self.list_kind);
 
-        let last = cmp::min(objects.len(), self.top + self.visible_count(area));
+        let last =
+            cmp::min(objects.len(), self.top + self.visible_count(view, area));
 
         // Always include object 0 - the global PipeWire state.
         let mut visible_objects = HashSet::from([ObjectId::from_raw_id(0)]);
@@ -353,17 +354,43 @@ impl ObjectList {
     }
 
     /// Returns the number of objects visible.
-    fn visible_count(&self, area: &Rect) -> usize {
+    fn visible_count(&self, view: &view::View, area: &Rect) -> usize {
         let (_, list_area, _) = self.areas(area);
-        let full_height = match self.list_kind {
-            ListKind::Node(_) => {
-                NodeWidget::height().saturating_add(NodeWidget::spacing())
-            }
-            ListKind::Device => {
-                DeviceWidget::height().saturating_add(DeviceWidget::spacing())
-            }
+        let spacing = match self.list_kind {
+            ListKind::Node(_) => NodeWidget::spacing(),
+            ListKind::Device => DeviceWidget::spacing(),
         };
-        (list_area.height / full_height) as usize
+
+        let mut used = 0u16;
+        let mut count = 0usize;
+        for height in self.item_heights(view) {
+            let step = height.saturating_add(spacing);
+            if used.saturating_add(step) > list_area.height {
+                break;
+            }
+            used = used.saturating_add(step);
+            count += 1;
+        }
+        count
+    }
+
+    /// Raw (spacing-excluded) height of every object visible from `top`
+    /// onward, in list order. Node heights vary with `channel_mode` and
+    /// each node's own channel count (see `NodeWidget::node_height`);
+    /// device heights are always uniform.
+    fn item_heights(&self, view: &view::View) -> Vec<u16> {
+        match self.list_kind {
+            ListKind::Node(node_kind) => view
+                .full_nodes(node_kind)
+                .iter()
+                .skip(self.top)
+                .map(|node| NodeWidget::node_height(self.channel_mode, node))
+                .collect(),
+            ListKind::Device => {
+                let count = view.full_devices().len().saturating_sub(self.top);
+                vec![DeviceWidget::height(); count]
+            }
+        }
     }
 
     /// Reconciles changes to objects, viewport, and selection.
@@ -376,7 +403,7 @@ impl ObjectList {
 
         let objects_len = view.len(self.list_kind);
 
-        let visible_count = self.visible_count(&area);
+        let visible_count = self.visible_count(view, &area);
 
         // If objects were removed and the viewport is now below the visible
         // objects, move the viewport up so that the bottom of the object list
@@ -465,6 +492,8 @@ impl ObjectListWidget<'_, '_> {
                 self.object_list.device_kind,
                 object,
                 selected,
+                self.object_list.channel_mode,
+                self.object_list.selected_channel,
             )
             .render(object_area, buf, mouse_areas);
         }
@@ -583,15 +612,26 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
             smallvec![Action::MoveDown],
         ));
 
-        let (spacing, height) = match self.object_list.list_kind {
-            ListKind::Node(_) => (NodeWidget::spacing(), NodeWidget::height()),
-            ListKind::Device => {
-                (DeviceWidget::spacing(), DeviceWidget::height())
-            }
+        let spacing = match self.object_list.list_kind {
+            ListKind::Node(_) => NodeWidget::spacing(),
+            ListKind::Device => DeviceWidget::spacing(),
         };
 
-        let full_object_height = height.saturating_add(spacing);
-        let objects_visible = (list_area.height / full_object_height) as usize;
+        // Real, possibly heterogeneous per-object heights (a node in
+        // channel mode is taller than one that isn't) - walked from `top`
+        // to find how many whole objects fit, mirroring
+        // `ObjectList::visible_count`'s own walk.
+        let item_heights = self.object_list.item_heights(self.view);
+        let mut used = 0u16;
+        let mut objects_visible = 0usize;
+        for &item_height in &item_heights {
+            let step = item_height.saturating_add(spacing);
+            if used.saturating_add(step) > list_area.height {
+                break;
+            }
+            used = used.saturating_add(step);
+            objects_visible += 1;
+        }
 
         let len = self.view.len(self.object_list.list_kind);
 
@@ -612,8 +652,9 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
         let is_bottom_last =
             self.object_list.top.saturating_add(objects_visible)
                 == len.saturating_sub(1);
-        let is_bottom_enough =
-            (list_area.height % full_object_height) >= height;
+        let is_bottom_enough = item_heights
+            .get(objects_visible)
+            .map_or(true, |&h| list_area.height.saturating_sub(used) >= h);
         if self.object_list.top.saturating_add(objects_visible) < len
             && !(is_bottom_last && is_bottom_enough)
         {
@@ -626,12 +667,15 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
         }
 
         let objects_layout = {
-            let object_height = height;
-            let mut constraints =
-                vec![Constraint::Length(object_height); objects_visible];
+            let mut constraints: Vec<Constraint> = item_heights
+                .iter()
+                .take(objects_visible)
+                .map(|&h| Constraint::Length(h))
+                .collect();
             // A variable-length constraint for a partial last object
-            constraints.push(Constraint::Max(object_height));
-            let constraints = constraints;
+            let partial_height =
+                item_heights.get(objects_visible).copied().unwrap_or(0);
+            constraints.push(Constraint::Max(partial_height));
 
             Layout::default()
                 .direction(Direction::Vertical)
@@ -959,6 +1003,52 @@ mod tests {
         object_list.toggle_channel_mode(&view);
         assert!(!object_list.channel_mode);
         assert_eq!(object_list.selected_channel, None);
+    }
+
+    #[test]
+    fn channel_mode_accounts_for_taller_nodes_in_visible_count() {
+        let mut state = State::default();
+        let wirehose = mock::WirehoseHandle::default();
+
+        // 1 header line + 4 channel rows = 5 lines tall in channel mode,
+        // vs. the ordinary fixed height of 3.
+        let object_id = ObjectId::from_raw_id(1);
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Multichannel node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_media_name(String::from("Media name"));
+        props.set_node_name(String::from("multi"));
+        props.set_object_serial(1);
+        state.update(StateEvent::NodeProperties { object_id, props });
+        state.update(StateEvent::NodeVolumes {
+            object_id,
+            volumes: vec![0.0, 0.0, 0.0, 0.0],
+        });
+        state.update(StateEvent::NodeMute {
+            object_id,
+            mute: false,
+        });
+
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        let spacing = NodeWidget::spacing();
+        // Room for exactly one node at the default height, but not once it
+        // expands to 5 lines tall in channel mode.
+        let full_default_height = NodeWidget::height().saturating_add(spacing);
+        // + 2 for header and footer
+        let rect = Rect::new(0, 0, 80, full_default_height + 2);
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        assert_eq!(object_list.visible_count(&view, &rect), 1);
+
+        object_list.channel_mode = true;
+        assert_eq!(object_list.visible_count(&view, &rect), 0);
     }
 
     #[test]

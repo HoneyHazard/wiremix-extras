@@ -624,6 +624,16 @@ mod tests {
     }
 
     #[test]
+    fn keybinding_toggle_channel_mode() {
+        let config = r#"
+        key = { Char = " " }
+        action = "ToggleChannelMode"
+        "#;
+        let keybinding: Keybinding = toml::from_str(config).unwrap();
+        assert_eq!(keybinding.action, Action::ToggleChannelMode);
+    }
+
+    #[test]
     fn unknown_field_names() {
         let config = r#"
         unknown = "unknown"

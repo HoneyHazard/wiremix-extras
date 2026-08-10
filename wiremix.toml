@@ -130,7 +130,7 @@ keybindings = [
  { key = { Char = "0" }, action = { SetAbsoluteVolume = 1.00 } },
  # Open the help menu
  { key = { Char = "?" }, action = "Help" },
- # There are four actions which don't have default bindings:
+ # There are five actions which don't have default bindings:
  # 1. "Nothing": Do nothing - can effectively delete a default keybinding
  # 2. { SelectTab = N }: Open the Nth tab
  # 3. { SetChannelAbsoluteVolume = [N, volume] }: Set the volume of just
@@ -138,15 +138,23 @@ keybindings = [
  #    `volume`, leaving every other channel alone
  # 4. { SetChannelRelativeVolume = [N, delta] }: Adjust the volume of just
  #    channel N by `delta`, relative to its own current value
+ # 5. "ToggleChannelMode": Toggle "Channel mode" - while active, the
+ #    selected item's own channels expand into one row each (for any item
+ #    with more than one channel) and Up/Down step through them one at a
+ #    time before moving to the next item, and the ordinary volume keys
+ #    (h/l, Left/Right, 0-9, etc.) adjust only the currently-cursored
+ #    channel instead of every channel together
  #
  # For example, to control the two channels of a stereo pair
  # independently with Ctrl+Left/Right (channel 0) and Ctrl+Up/Down
- # (channel 1) - useful alongside show_channel_volumes = true above:
+ # (channel 1) - useful alongside show_channel_volumes = true above, or
+ # with "ToggleChannelMode" bound to a key of your choice:
  #
  # { key = "Left", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [0, -0.01] } },
  # { key = "Right", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [0, 0.01] } },
  # { key = "Up", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [1, 0.01] } },
  # { key = "Down", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [1, -0.01] } },
+ # { key = { Char = " " }, action = "ToggleChannelMode" },
  #
  # Ctrl+arrow keys aren't guaranteed to reach wiremix on every terminal -
  # some terminal emulators and multiplexers (tmux, screen) intercept them

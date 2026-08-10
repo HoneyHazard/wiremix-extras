@@ -33,6 +33,15 @@ pub struct NodeWidget<'a> {
     device_kind: Option<DeviceKind>,
     node: &'a view::Node,
     selected: bool,
+    /// Whether keyboard navigation/volume keys are targeting individual
+    /// channels ("Channel mode" - see the multichannel design notes,
+    /// §7.3/§7.4). Session-wide, so it affects how every node in the list
+    /// renders, not just the selected one.
+    channel_mode: bool,
+    /// Which channel of *this* node is cursor-targeted, if any. Only
+    /// meaningful when `selected` is also true - another node's channel
+    /// index has no bearing on this one's marker.
+    selected_channel: Option<usize>,
 }
 
 impl<'a> NodeWidget<'a> {
@@ -41,18 +50,36 @@ impl<'a> NodeWidget<'a> {
         device_kind: Option<DeviceKind>,
         node: &'a view::Node,
         selected: bool,
+        channel_mode: bool,
+        selected_channel: Option<usize>,
     ) -> Self {
         Self {
             config,
             device_kind,
             node,
             selected,
+            channel_mode,
+            selected_channel,
         }
     }
 
-    /// Height of a full node display.
+    /// Height of a full node display in the default (non-Channel-mode)
+    /// layout.
     pub fn height() -> u16 {
         3
+    }
+
+    /// Height of `node`'s display given the current channel mode -
+    /// channel mode expands a node with more than one channel into one
+    /// header line plus one line per channel; everything else renders at
+    /// the ordinary fixed `height()`.
+    pub fn node_height(channel_mode: bool, node: &view::Node) -> u16 {
+        let channel_count = node.volumes.len();
+        if channel_mode && channel_count > 1 {
+            1 + channel_count as u16
+        } else {
+            Self::height()
+        }
     }
 
     /// Spacing between nodes
@@ -87,6 +114,66 @@ impl<'a> NodeWidget<'a> {
         let y = object_area.top().saturating_sub(1);
 
         Rect::new(x, y, width, height)
+    }
+
+    /// Channel mode display: one header line (title/target, same as the
+    /// ordinary layout) followed by one line per channel, each its own
+    /// independently addressable volume bar. See `node_height` for the
+    /// matching height calculation.
+    fn render_channel_rows(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        mouse_areas: &mut Vec<MouseArea>,
+        channel_count: usize,
+    ) {
+        let mut constraints = vec![Constraint::Length(1)]; // header_row
+        constraints.extend(
+            std::iter::repeat(Constraint::Length(1)).take(channel_count),
+        );
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(area);
+
+        let row_layout = |row: Rect| {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(1), // marker_area
+                    Constraint::Min(0),    // rest_area
+                ])
+                .split(row)
+        };
+
+        let header_split = row_layout(rows[0]);
+        if self.selected {
+            Span::styled(
+                &self.config.char_set.selector_middle,
+                self.config.theme.selector,
+            )
+            .render(header_split[0], buf);
+        }
+        HeaderWidget::new(self.config, self.device_kind, self.node).render(
+            header_split[1],
+            buf,
+            mouse_areas,
+        );
+
+        for channel_index in 0..channel_count {
+            let split = row_layout(rows[channel_index + 1]);
+            let marked =
+                self.selected && self.selected_channel == Some(channel_index);
+            if marked {
+                Span::styled(
+                    &self.config.char_set.selector_middle,
+                    self.config.theme.selector,
+                )
+                .render(split[0], buf);
+            }
+            ChannelRowWidget::new(self.config, self.node, channel_index)
+                .render(split[1], buf, mouse_areas);
+        }
     }
 }
 
@@ -127,6 +214,12 @@ impl StatefulWidget for NodeWidget<'_> {
                 ],
             ),
         ]);
+
+        let channel_count = self.node.volumes.len();
+        if self.channel_mode && channel_count > 1 {
+            self.render_channel_rows(area, buf, mouse_areas, channel_count);
+            return;
+        }
 
         // Split area into a selection indicator on the left and the main node
         // area on the right
@@ -700,6 +793,127 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
     }
 }
 
+/// A single channel's volume bar within Channel mode's stacked-row
+/// display - one line, independently addressable, labeled with its raw
+/// channel index (see `NOTES-multichannel.md` §6 on why a friendlier
+/// L/R-style label is deliberately out of scope for now).
+struct ChannelRowWidget<'a> {
+    config: &'a Config,
+    node: &'a view::Node,
+    channel_index: usize,
+}
+
+impl<'a> ChannelRowWidget<'a> {
+    fn new(
+        config: &'a Config,
+        node: &'a view::Node,
+        channel_index: usize,
+    ) -> Self {
+        Self {
+            config,
+            node,
+            channel_index,
+        }
+    }
+}
+
+impl StatefulWidget for ChannelRowWidget<'_> {
+    type State = Vec<MouseArea>;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let mouse_areas = state;
+
+        let max_volume = self.config.max_volume_percent / 100.0;
+
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(6), // volume_label, e.g. "0 100%"
+                Constraint::Min(0),    // volume_bar
+            ])
+            .spacing(1)
+            .split(area);
+        let volume_label = layout[0];
+        let volume_bar = layout[1];
+
+        let volume = self
+            .node
+            .volumes
+            .get(self.channel_index)
+            .copied()
+            .unwrap_or(0.0)
+            .cbrt();
+        let percent = (volume * 100.0).round() as u32;
+        let channel_index = self.channel_index;
+
+        Line::from(Span::styled(
+            format!("{channel_index} {percent}%"),
+            self.config.theme.volume,
+        ))
+        .alignment(Alignment::Right)
+        .render(volume_label, buf);
+
+        let count = ((volume.clamp(0.0, max_volume) / max_volume)
+            * volume_bar.width as f32)
+            .round() as usize;
+        let filled = self.config.char_set.volume_filled.repeat(count);
+        let blank = self
+            .config
+            .char_set
+            .volume_empty
+            .repeat((volume_bar.width as usize).saturating_sub(count));
+        Line::from(vec![
+            Span::styled(filled, self.config.theme.volume_filled),
+            Span::styled(blank, self.config.theme.volume_empty),
+        ])
+        .render(volume_bar, buf);
+
+        if self.node.mute {
+            Line::from(format!("{channel_index} muted"))
+                .render(volume_label, buf);
+        }
+
+        mouse_areas.push((
+            volume_label,
+            smallvec![MouseEventKind::Down(MouseButton::Left)],
+            smallvec![
+                Action::SelectObject(self.node.object_id),
+                Action::ToggleMute
+            ],
+        ));
+
+        // Click-to-set mouse areas, mirroring VolumeWidget's own
+        // per-column loop, but dispatching to just this channel.
+        for i in 0..=volume_bar.width {
+            let x = volume_bar.x.saturating_add(i);
+            let volume_area = Rect::new(x, volume_bar.y, 1, volume_bar.height);
+
+            let volume_step = max_volume / volume_bar.width as f32;
+            let volume = volume_step * i as f32;
+            let sticky_volume = if (1.0 - volume).abs() <= volume_step {
+                1.0
+            } else {
+                volume
+            };
+
+            mouse_areas.push((
+                volume_area,
+                smallvec![
+                    MouseEventKind::Down(MouseButton::Left),
+                    MouseEventKind::Drag(MouseButton::Left),
+                ],
+                smallvec![
+                    Action::SelectObject(self.node.object_id),
+                    Action::SetChannelAbsoluteVolume(
+                        channel_index,
+                        sticky_volume
+                    ),
+                ],
+            ));
+        }
+    }
+}
+
 struct MeterWidget<'a> {
     config: &'a Config,
     node: &'a view::Node,
@@ -786,6 +1000,43 @@ mod tests {
         line
     }
 
+    /// Renders a full `NodeWidget` (not just its volume bar) and returns
+    /// every line, sized exactly to `NodeWidget::node_height` for the
+    /// given mode/node so a channel-mode node's stacked rows are all
+    /// captured.
+    fn render_node_lines(
+        config: &Config,
+        node: &view::Node,
+        channel_mode: bool,
+        selected: bool,
+        selected_channel: Option<usize>,
+    ) -> Vec<String> {
+        let height = NodeWidget::node_height(channel_mode, node);
+        let area = Rect::new(0, 0, 40, height);
+        let mut buf = Buffer::empty(area);
+        NodeWidget::new(
+            config,
+            None,
+            node,
+            selected,
+            channel_mode,
+            selected_channel,
+        )
+        .render(area, &mut buf, &mut Vec::new());
+
+        (0..height)
+            .map(|y| {
+                let mut line = String::new();
+                for x in 0..area.width {
+                    line.push_str(
+                        buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "),
+                    );
+                }
+                line
+            })
+            .collect()
+    }
+
     #[test]
     fn stereo_pair_finds_the_first_named_lr_pair() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
@@ -858,5 +1109,78 @@ mod tests {
         let rendered = render_to_string(&config, &node);
 
         assert!(rendered.contains("50%"));
+    }
+
+    #[test]
+    fn node_height_default_is_unaffected_by_channel_count() {
+        let node = test_node(None, vec![1.0, 1.0, 1.0]);
+        assert_eq!(NodeWidget::node_height(false, &node), NodeWidget::height());
+    }
+
+    #[test]
+    fn node_height_channel_mode_expands_one_line_per_channel() {
+        let node = test_node(None, vec![1.0, 1.0, 1.0]);
+        // 1 header line + 3 channel lines
+        assert_eq!(NodeWidget::node_height(true, &node), 4);
+    }
+
+    #[test]
+    fn node_height_channel_mode_single_channel_unaffected() {
+        let node = test_node(None, vec![1.0]);
+        assert_eq!(NodeWidget::node_height(true, &node), NodeWidget::height());
+    }
+
+    #[test]
+    fn channel_mode_renders_one_line_per_channel() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        let config = config::Config::from_toml_str("");
+
+        let lines = render_node_lines(&config, &node, true, false, None);
+
+        assert_eq!(lines.len(), 3); // header + 2 channel rows
+        assert!(lines[1].contains("0 100%"));
+        assert!(lines[2].contains("1 0%"));
+    }
+
+    #[test]
+    fn channel_mode_off_ignores_selected_channel() {
+        // Regression guard: node_height/rendering must fall back to the
+        // ordinary single-bar layout when channel_mode is off, even if a
+        // stale selected_channel is still set from a previous mode.
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        let config = config::Config::from_toml_str("");
+
+        let lines = render_node_lines(&config, &node, false, true, Some(1));
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(NodeWidget::node_height(false, &node), 3);
+    }
+
+    #[test]
+    fn channel_mode_marks_only_the_selected_channel_row() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        let config = config::Config::from_toml_str("");
+        let marker = config.char_set.selector_middle.as_str();
+
+        let channel_0_marked =
+            render_node_lines(&config, &node, true, true, Some(0));
+        assert!(channel_0_marked[1].contains(marker));
+        assert!(!channel_0_marked[2].contains(marker));
+
+        let channel_1_marked =
+            render_node_lines(&config, &node, true, true, Some(1));
+        assert!(!channel_1_marked[1].contains(marker));
+        assert!(channel_1_marked[2].contains(marker));
+
+        let not_selected =
+            render_node_lines(&config, &node, true, false, Some(0));
+        assert!(!not_selected[1].contains(marker));
+        assert!(!not_selected[2].contains(marker));
     }
 }
