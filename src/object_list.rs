@@ -153,6 +153,22 @@ impl ObjectList {
         false
     }
 
+    pub fn set_channel_absolute_volume(
+        &mut self,
+        view: &view::View,
+        channel: usize,
+        volume: f32,
+        max: Option<f32>,
+    ) -> bool {
+        if matches!(self.list_kind, ListKind::Device) {
+            return false;
+        }
+        if let Some(node_id) = self.selected {
+            return view.channel_volume(node_id, channel, volume, max);
+        }
+        false
+    }
+
     pub fn set_relative_volume(
         &mut self,
         view: &view::View,

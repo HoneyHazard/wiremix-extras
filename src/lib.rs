@@ -1,5 +1,6 @@
 pub mod app;
 pub mod atomic_f32;
+pub mod channel_pairing;
 pub mod config;
 pub mod device_kind;
 pub mod device_widget;

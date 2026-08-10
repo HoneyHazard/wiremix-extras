@@ -78,6 +78,17 @@ pub struct Opt {
     #[clap(long, conflicts_with = "no_lazy_capture")]
     pub lazy_capture: bool,
 
+    /// Show one combined volume bar even for nodes with a detected stereo
+    /// (or other named left/right) channel pair
+    #[clap(long, conflicts_with = "show_channel_volumes")]
+    pub no_show_channel_volumes: bool,
+
+    /// Show a separate radiating volume bar per channel for nodes with a
+    /// detected stereo (or other named left/right) channel pair, instead
+    /// of one bar averaging all channels
+    #[clap(long, conflicts_with = "no_show_channel_volumes")]
+    pub show_channel_volumes: bool,
+
     #[cfg(debug_assertions)]
     #[clap(short, long)]
     pub dump_events: bool,

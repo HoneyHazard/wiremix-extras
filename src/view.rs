@@ -772,6 +772,53 @@ impl<'a> View<'a> {
         true
     }
 
+    /// Sets the volume of a single channel on the provided node, leaving
+    /// every other channel exactly as it was - unlike `volume()`, which
+    /// always applies to every channel together. `channel` is an index
+    /// into the node's own `volumes`/`positions`; out of range is a no-op.
+    /// If max volume is provided, won't change the channel's volume if the
+    /// result would be greater than max. Returns true if the volume was
+    /// changed, otherwise false.
+    pub fn channel_volume(
+        &self,
+        node_id: ObjectId,
+        channel: usize,
+        volume: f32,
+        max: Option<f32>,
+    ) -> bool {
+        let Some(node) = self.nodes.get(&node_id) else {
+            return false;
+        };
+
+        let mut volumes = node.volumes.clone();
+        let Some(slot) = volumes.get_mut(channel) else {
+            return false;
+        };
+
+        let new_volume = volume.max(0.0).powi(3);
+
+        if let Some(max) = max {
+            if (new_volume.cbrt() * 100.0).round() > max {
+                return false;
+            }
+        }
+
+        *slot = new_volume;
+
+        if let Some((device_id, route_index, route_device)) = node.device_info {
+            self.wirehose.device_volumes(
+                device_id,
+                route_index,
+                route_device,
+                volumes,
+            );
+        } else {
+            self.wirehose.node_volumes(node_id, volumes);
+        }
+
+        true
+    }
+
     pub fn object_ids(&self, node_kind: ListKind) -> &[ObjectId] {
         match node_kind {
             ListKind::Node(NodeKind::Playback) => &self.nodes_playback,

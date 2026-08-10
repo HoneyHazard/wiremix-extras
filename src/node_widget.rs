@@ -13,6 +13,7 @@ use crossterm::event::{MouseButton, MouseEventKind};
 use smallvec::smallvec;
 
 use crate::app::{Action, MouseArea};
+use crate::channel_pairing::{self, ChannelGroup};
 use crate::config::{Config, Peaks};
 use crate::device_kind::DeviceKind;
 use crate::meter;
@@ -163,7 +164,6 @@ impl StatefulWidget for NodeWidget<'_> {
         );
 
         // Render volume bar and (if enabled) peak meter
-        let volume = VolumeWidget::new(self.config, self.node);
         if self.config.peaks == Peaks::Off {
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
@@ -176,7 +176,13 @@ impl StatefulWidget for NodeWidget<'_> {
             // index 0 is _padding
             let volume_area = layout[1];
 
-            volume.render(volume_area, buf, mouse_areas);
+            render_volume(
+                self.config,
+                self.node,
+                volume_area,
+                buf,
+                mouse_areas,
+            );
         } else {
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
@@ -193,7 +199,13 @@ impl StatefulWidget for NodeWidget<'_> {
             // index 2 is _padding
             let meter_area = layout[3];
 
-            volume.render(volume_area, buf, mouse_areas);
+            render_volume(
+                self.config,
+                self.node,
+                volume_area,
+                buf,
+                mouse_areas,
+            );
             MeterWidget::new(self.config, self.node).render(meter_area, buf);
         }
     }
@@ -359,6 +371,41 @@ impl StatefulWidget for HeaderWidget<'_> {
     }
 }
 
+/// The first detected left/right channel pair on `node`, if
+/// `show_channel_volumes` display should render one for it. `None` if the
+/// node has no `positions` data at all, or none of its channels pair (see
+/// `channel_pairing`) - callers fall back to the ordinary single-bar
+/// `VolumeWidget` in that case.
+fn stereo_pair(node: &view::Node) -> Option<(usize, usize)> {
+    let positions = node.positions.as_ref()?;
+    channel_pairing::group_channels(positions)
+        .into_iter()
+        .find_map(|group| match group {
+            ChannelGroup::Pair(left, right) => Some((left, right)),
+            ChannelGroup::Single(_) => None,
+        })
+}
+
+fn render_volume(
+    config: &Config,
+    node: &view::Node,
+    area: Rect,
+    buf: &mut Buffer,
+    mouse_areas: &mut Vec<MouseArea>,
+) {
+    if config.show_channel_volumes {
+        if let Some((left, right)) = stereo_pair(node) {
+            StereoVolumeWidget::new(config, node, left, right).render(
+                area,
+                buf,
+                mouse_areas,
+            );
+            return;
+        }
+    }
+    VolumeWidget::new(config, node).render(area, buf, mouse_areas);
+}
+
 struct VolumeWidget<'a> {
     config: &'a Config,
     node: &'a view::Node,
@@ -461,6 +508,194 @@ impl StatefulWidget for VolumeWidget<'_> {
                     Action::SetAbsoluteVolume(sticky_volume),
                 ],
             ));
+        }
+    }
+}
+
+/// Two independent, radiating volume bars for a node's detected left/right
+/// channel pair - one per channel, each growing outward from a shared
+/// center marker, instead of `VolumeWidget`'s single bar averaging every
+/// channel together. `left_index`/`right_index` index into the node's own
+/// `volumes` (and correspond to its `positions`, per `channel_pairing`).
+struct StereoVolumeWidget<'a> {
+    config: &'a Config,
+    node: &'a view::Node,
+    left_index: usize,
+    right_index: usize,
+}
+
+impl<'a> StereoVolumeWidget<'a> {
+    fn new(
+        config: &'a Config,
+        node: &'a view::Node,
+        left_index: usize,
+        right_index: usize,
+    ) -> Self {
+        Self {
+            config,
+            node,
+            left_index,
+            right_index,
+        }
+    }
+}
+
+impl StatefulWidget for StereoVolumeWidget<'_> {
+    type State = Vec<MouseArea>;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let mouse_areas = state;
+
+        if self.node.mute {
+            Line::from("muted")
+                .alignment(Alignment::Center)
+                .render(area, buf);
+            mouse_areas.push((
+                area,
+                smallvec![MouseEventKind::Down(MouseButton::Left)],
+                smallvec![
+                    Action::SelectObject(self.node.object_id),
+                    Action::ToggleMute
+                ],
+            ));
+            return;
+        }
+
+        let max_volume = self.config.max_volume_percent / 100.0;
+
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(4), // label_l
+                Constraint::Fill(1),   // bar_l
+                Constraint::Length(1), // center
+                Constraint::Fill(1),   // bar_r
+                Constraint::Length(4), // label_r
+            ])
+            .spacing(1)
+            .split(area);
+        let label_l = layout[0];
+        let bar_l = layout[1];
+        let center = layout[2];
+        let bar_r = layout[3];
+        let label_r = layout[4];
+
+        let volumes = &self.node.volumes;
+        let left_volume =
+            volumes.get(self.left_index).copied().unwrap_or(0.0).cbrt();
+        let right_volume =
+            volumes.get(self.right_index).copied().unwrap_or(0.0).cbrt();
+
+        Line::from(Span::styled(
+            format!("{}%", (left_volume * 100.0).round() as u32),
+            self.config.theme.volume,
+        ))
+        .alignment(Alignment::Right)
+        .render(label_l, buf);
+
+        Line::from(Span::styled(
+            format!("{}%", (right_volume * 100.0).round() as u32),
+            self.config.theme.volume,
+        ))
+        .render(label_r, buf);
+
+        Line::from(Span::styled("|", self.config.theme.volume))
+            .alignment(Alignment::Center)
+            .render(center, buf);
+
+        // Left bar: the filled portion sits adjacent to the center marker
+        // (the bar's own right edge) and grows outward, away from center,
+        // as volume increases.
+        let left_count = ((left_volume.clamp(0.0, max_volume) / max_volume)
+            * bar_l.width as f32)
+            .round() as usize;
+        Line::from(vec![
+            Span::styled(
+                self.config
+                    .char_set
+                    .volume_empty
+                    .repeat((bar_l.width as usize).saturating_sub(left_count)),
+                self.config.theme.volume_empty,
+            ),
+            Span::styled(
+                self.config.char_set.volume_filled.repeat(left_count),
+                self.config.theme.volume_filled,
+            ),
+        ])
+        .render(bar_l, buf);
+
+        // Right bar: mirror image of the left one - filled adjacent to
+        // center, growing outward to the right.
+        let right_count = ((right_volume.clamp(0.0, max_volume) / max_volume)
+            * bar_r.width as f32)
+            .round() as usize;
+        Line::from(vec![
+            Span::styled(
+                self.config.char_set.volume_filled.repeat(right_count),
+                self.config.theme.volume_filled,
+            ),
+            Span::styled(
+                self.config
+                    .char_set
+                    .volume_empty
+                    .repeat((bar_r.width as usize).saturating_sub(right_count)),
+                self.config.theme.volume_empty,
+            ),
+        ])
+        .render(bar_r, buf);
+
+        for label_area in [label_l, label_r] {
+            mouse_areas.push((
+                label_area,
+                smallvec![MouseEventKind::Down(MouseButton::Left)],
+                smallvec![
+                    Action::SelectObject(self.node.object_id),
+                    Action::ToggleMute
+                ],
+            ));
+        }
+
+        // Click-to-set mouse areas, per channel, each measured outward
+        // from the center marker (column 0 = right at center) - mirrors
+        // VolumeWidget's own per-column mouse area loop, just split
+        // across two independently-clickable halves instead of one.
+        for (bar, channel_index, from_center) in [
+            (bar_l, self.left_index, true),
+            (bar_r, self.right_index, false),
+        ] {
+            for i in 0..=bar.width {
+                let x = if from_center {
+                    bar.x.saturating_add(bar.width.saturating_sub(i))
+                } else {
+                    bar.x.saturating_add(i)
+                };
+                let volume_area = Rect::new(x, bar.y, 1, bar.height);
+
+                let volume_step = max_volume / bar.width as f32;
+                let volume = volume_step * i as f32;
+                // Make the volume sticky around 100%. Otherwise it's often
+                // not possible to select by mouse.
+                let sticky_volume = if (1.0 - volume).abs() <= volume_step {
+                    1.0
+                } else {
+                    volume
+                };
+
+                mouse_areas.push((
+                    volume_area,
+                    smallvec![
+                        MouseEventKind::Down(MouseButton::Left),
+                        MouseEventKind::Drag(MouseButton::Left),
+                    ],
+                    smallvec![
+                        Action::SelectObject(self.node.object_id),
+                        Action::SetChannelAbsoluteVolume(
+                            channel_index,
+                            sticky_volume
+                        ),
+                    ],
+                ));
+            }
         }
     }
 }

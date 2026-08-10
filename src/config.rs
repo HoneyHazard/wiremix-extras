@@ -44,6 +44,7 @@ pub struct Config {
     pub tab: usize,
     pub tabs: Vec<TabKind>,
     pub lazy_capture: bool,
+    pub show_channel_volumes: bool,
     pub filters: Vec<MatchCondition>,
 }
 
@@ -88,6 +89,8 @@ struct ConfigFile {
     tabs: Vec<TabKind>,
     #[serde(default = "default_lazy_capture")]
     lazy_capture: bool,
+    #[serde(default = "default_show_channel_volumes")]
+    show_channel_volumes: bool,
     #[serde(default = "Filter::defaults", deserialize_with = "Filter::merge")]
     filters: Vec<Filter>,
 }
@@ -270,6 +273,10 @@ fn default_lazy_capture() -> bool {
     false
 }
 
+fn default_show_channel_volumes() -> bool {
+    false
+}
+
 impl ConfigFile {
     /// Override configuration with command-line arguments.
     pub fn apply_opt(&mut self, opt: &Opt) {
@@ -327,6 +334,14 @@ impl ConfigFile {
 
         if opt.lazy_capture {
             self.lazy_capture = true;
+        }
+
+        if opt.no_show_channel_volumes {
+            self.show_channel_volumes = false;
+        }
+
+        if opt.show_channel_volumes {
+            self.show_channel_volumes = true;
         }
     }
 }
@@ -396,6 +411,7 @@ impl TryFrom<ConfigFile> for Config {
             tab,
             tabs: config_file.tabs,
             lazy_capture: config_file.lazy_capture,
+            show_channel_volumes: config_file.show_channel_volumes,
             filters,
         })
     }
@@ -481,6 +497,7 @@ pub mod strict {
         tab: Option<TabKind>,
         tabs: Vec<TabKind>,
         lazy_capture: bool,
+        show_channel_volumes: bool,
         filters: Vec<Filter>,
     }
 
@@ -502,6 +519,7 @@ pub mod strict {
                 tab: strict.tab,
                 tabs: strict.tabs,
                 lazy_capture: strict.lazy_capture,
+                show_channel_volumes: strict.show_channel_volumes,
                 filters: strict.filters,
             }
         }

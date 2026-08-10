@@ -58,6 +58,12 @@ pub enum Action {
     TabRight,
     SelectTab(usize),
     SetAbsoluteVolume(f32),
+    /// Sets the volume of a single channel by index (into the selected
+    /// node's own `positions`/`volumes`), leaving every other channel
+    /// alone - unlike `SetAbsoluteVolume`, which applies to every channel
+    /// together. No-op if the selected node doesn't have that many
+    /// channels.
+    SetChannelAbsoluteVolume(usize, f32),
     #[serde(skip_deserializing)]
     SelectObject(ObjectId),
     #[serde(skip_deserializing)]
@@ -83,6 +89,13 @@ impl std::fmt::Display for Action {
             Action::ToggleMute => write!(f, "Toggle mute"),
             Action::SetAbsoluteVolume(vol) => {
                 write!(f, "Set volume to {}%", Self::format_percentage(*vol))
+            }
+            Action::SetChannelAbsoluteVolume(channel, vol) => {
+                write!(
+                    f,
+                    "Set channel {channel} volume to {}%",
+                    Self::format_percentage(*vol)
+                )
             }
             Action::SetRelativeVolume(vol) => {
                 Self::format_relative_volume(f, *vol)
@@ -619,6 +632,15 @@ impl Handle for Action {
                 return Ok(current_list!(app)
                     .set_absolute_volume(&app.view, volume, max));
             }
+            Action::SetChannelAbsoluteVolume(channel, volume) => {
+                let max = app
+                    .config
+                    .enforce_max_volume
+                    .then_some(app.config.max_volume_percent);
+                return Ok(current_list!(app).set_channel_absolute_volume(
+                    &app.view, channel, volume, max,
+                ));
+            }
             Action::SetRelativeVolume(volume) => {
                 // Relative decreases have no maximum.
                 let max = (volume > 0.0 && app.config.enforce_max_volume)
@@ -881,6 +903,7 @@ mod tests {
             tab: 0,
             tabs: vec![TabKind::Playback],
             lazy_capture: Default::default(),
+            show_channel_volumes: Default::default(),
             filters: Default::default(),
         };
 
@@ -982,6 +1005,7 @@ mod tests {
                 TabKind::Configuration,
             ],
             lazy_capture: Default::default(),
+            show_channel_volumes: Default::default(),
             filters: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);
