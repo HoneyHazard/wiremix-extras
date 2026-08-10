@@ -885,6 +885,7 @@ impl StatefulWidget for ChannelRowWidget<'_> {
             smallvec![MouseEventKind::Down(MouseButton::Left)],
             smallvec![
                 Action::SelectObject(self.node.object_id),
+                Action::SelectChannel(channel_index),
                 Action::ToggleMute
             ],
         ));
@@ -911,6 +912,7 @@ impl StatefulWidget for ChannelRowWidget<'_> {
                 ],
                 smallvec![
                     Action::SelectObject(self.node.object_id),
+                    Action::SelectChannel(channel_index),
                     Action::SetChannelAbsoluteVolume(
                         channel_index,
                         sticky_volume

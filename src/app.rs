@@ -75,6 +75,14 @@ pub enum Action {
     ToggleChannelMode,
     #[serde(skip_deserializing)]
     SelectObject(ObjectId),
+    /// Moves the channel-mode cursor to a specific channel index, without
+    /// changing which node is selected. Mouse-only (like `SelectObject`) -
+    /// paired with it in a channel row's own click mouse areas so clicking
+    /// a channel also targets it for subsequent keyboard volume keys,
+    /// rather than leaving a stale `selected_channel` from whatever was
+    /// last cursored via the keyboard.
+    #[serde(skip_deserializing)]
+    SelectChannel(usize),
     #[serde(skip_deserializing)]
     SetTarget(view::Target),
     // This can be used to delete a default keybinding - make it do nothing.
@@ -93,6 +101,9 @@ impl std::fmt::Display for Action {
             Action::ActivateDropdown => write!(f, "Open menu"),
             Action::SelectObject(object_id) => {
                 write!(f, "Select object {object_id:?}")
+            }
+            Action::SelectChannel(channel) => {
+                write!(f, "Select channel {channel}")
             }
             Action::SetTarget(_) => write!(f, "Set target"),
             Action::ToggleMute => write!(f, "Toggle mute"),
@@ -657,6 +668,10 @@ impl Handle for Action {
             }
             Action::SelectObject(object_id) => {
                 app.tabs[app.current_tab_index].list.selected = Some(object_id)
+            }
+            Action::SelectChannel(channel) => {
+                app.tabs[app.current_tab_index].list.selected_channel =
+                    Some(channel);
             }
             Action::ToggleMute => {
                 current_list!(app).toggle_mute(&app.view);
@@ -1283,6 +1298,19 @@ mod tests {
         assert!(!Action::SetChannelAbsoluteVolume(2, 0.90)
             .handle(&mut app)
             .unwrap());
+    }
+
+    #[test]
+    fn select_channel_sets_selected_channel_without_touching_selected() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let object_id = app.tabs[app.current_tab_index].list.selected;
+
+        assert!(Action::SelectChannel(1).handle(&mut app).unwrap());
+
+        let list = &app.tabs[app.current_tab_index].list;
+        assert_eq!(list.selected, object_id);
+        assert_eq!(list.selected_channel, Some(1));
     }
 
     #[test]
