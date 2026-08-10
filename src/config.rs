@@ -598,6 +598,32 @@ mod tests {
     }
 
     #[test]
+    fn keybinding_channel_absolute_volume() {
+        let config = r#"
+        key = { Char = "1" }
+        action = { SetChannelAbsoluteVolume = [0, 0.50] }
+        "#;
+        let keybinding: Keybinding = toml::from_str(config).unwrap();
+        assert_eq!(
+            keybinding.action,
+            Action::SetChannelAbsoluteVolume(0, 0.50)
+        );
+    }
+
+    #[test]
+    fn keybinding_channel_relative_volume() {
+        let config = r#"
+        key = { Char = "2" }
+        action = { SetChannelRelativeVolume = [1, 0.01] }
+        "#;
+        let keybinding: Keybinding = toml::from_str(config).unwrap();
+        assert_eq!(
+            keybinding.action,
+            Action::SetChannelRelativeVolume(1, 0.01)
+        );
+    }
+
+    #[test]
     fn unknown_field_names() {
         let config = r#"
         unknown = "unknown"

@@ -130,9 +130,28 @@ keybindings = [
  { key = { Char = "0" }, action = { SetAbsoluteVolume = 1.00 } },
  # Open the help menu
  { key = { Char = "?" }, action = "Help" },
- # There are two actions which don't have default bindings:
+ # There are four actions which don't have default bindings:
  # 1. "Nothing": Do nothing - can effectively delete a default keybinding
  # 2. { SelectTab = N }: Open the Nth tab
+ # 3. { SetChannelAbsoluteVolume = [N, volume] }: Set the volume of just
+ #    channel N (an index into the selected item's own channels) to
+ #    `volume`, leaving every other channel alone
+ # 4. { SetChannelRelativeVolume = [N, delta] }: Adjust the volume of just
+ #    channel N by `delta`, relative to its own current value
+ #
+ # For example, to control the two channels of a stereo pair
+ # independently with Ctrl+Left/Right (channel 0) and Ctrl+Up/Down
+ # (channel 1) - useful alongside show_channel_volumes = true above:
+ #
+ # { key = "Left", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [0, -0.01] } },
+ # { key = "Right", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [0, 0.01] } },
+ # { key = "Up", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [1, 0.01] } },
+ # { key = "Down", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [1, -0.01] } },
+ #
+ # Ctrl+arrow keys aren't guaranteed to reach wiremix on every terminal -
+ # some terminal emulators and multiplexers (tmux, screen) intercept them
+ # first for their own tab/pane/word-jump bindings. Pick different keys
+ # if these don't seem to work in your setup.
 ]
 
 
