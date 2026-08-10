@@ -64,6 +64,10 @@ pub enum Action {
     /// together. No-op if the selected node doesn't have that many
     /// channels.
     SetChannelAbsoluteVolume(usize, f32),
+    /// Adjusts the volume of a single channel by index, relative to its
+    /// own current value - the per-channel counterpart to
+    /// `SetRelativeVolume`, which adjusts every channel together instead.
+    SetChannelRelativeVolume(usize, f32),
     #[serde(skip_deserializing)]
     SelectObject(ObjectId),
     #[serde(skip_deserializing)]
@@ -100,6 +104,9 @@ impl std::fmt::Display for Action {
             Action::SetRelativeVolume(vol) => {
                 Self::format_relative_volume(f, *vol)
             }
+            Action::SetChannelRelativeVolume(channel, vol) => {
+                Self::format_channel_relative_volume(f, *channel, *vol)
+            }
             Action::SetDefault => write!(f, "Set default"),
             Action::Help => write!(f, "Show/hide help"),
             Action::Exit => write!(f, "Exit wiremix"),
@@ -125,6 +132,31 @@ impl Action {
             }
             v => {
                 write!(f, "Decrease volume by {}%", Self::format_percentage(-v))
+            }
+        }
+    }
+
+    fn format_channel_relative_volume(
+        f: &mut std::fmt::Formatter<'_>,
+        channel: usize,
+        vol: f32,
+    ) -> std::fmt::Result {
+        match vol {
+            0.01 => write!(f, "Increment channel {channel} volume"),
+            -0.01 => write!(f, "Decrement channel {channel} volume"),
+            v if v >= 0.0 => {
+                write!(
+                    f,
+                    "Increase channel {channel} volume by {}%",
+                    Self::format_percentage(v)
+                )
+            }
+            v => {
+                write!(
+                    f,
+                    "Decrease channel {channel} volume by {}%",
+                    Self::format_percentage(-v)
+                )
             }
         }
     }
@@ -648,6 +680,14 @@ impl Handle for Action {
                 return Ok(current_list!(app)
                     .set_relative_volume(&app.view, volume, max));
             }
+            Action::SetChannelRelativeVolume(channel, volume) => {
+                // Relative decreases have no maximum.
+                let max = (volume > 0.0 && app.config.enforce_max_volume)
+                    .then_some(app.config.max_volume_percent);
+                return Ok(current_list!(app).set_channel_relative_volume(
+                    &app.view, channel, volume, max,
+                ));
+            }
             Action::SetDefault => {
                 current_list!(app).set_default(&app.view);
             }
@@ -1150,6 +1190,78 @@ mod tests {
         // 90% is allowed
         assert!(Action::SetRelativeVolume(-0.10).handle(&mut app).unwrap());
         assert!(Action::SetAbsoluteVolume(0.90).handle(&mut app).unwrap());
+    }
+
+    #[test]
+    fn channel_volume_limit_not_enforcing() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        app.config.max_volume_percent = 100.0;
+        app.config.enforce_max_volume = false;
+
+        // Channel 0 is currently at 100%
+
+        // 110% is allowed
+        assert!(Action::SetChannelRelativeVolume(0, 0.10)
+            .handle(&mut app)
+            .unwrap());
+        assert!(Action::SetChannelAbsoluteVolume(0, 1.10)
+            .handle(&mut app)
+            .unwrap());
+
+        // 90% is allowed
+        assert!(Action::SetChannelRelativeVolume(0, -0.10)
+            .handle(&mut app)
+            .unwrap());
+        assert!(Action::SetChannelAbsoluteVolume(0, 0.90)
+            .handle(&mut app)
+            .unwrap());
+    }
+
+    #[test]
+    fn channel_volume_limit_at_max() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        app.config.max_volume_percent = 100.0;
+        app.config.enforce_max_volume = true;
+
+        // Channel 0 is currently at 100%
+
+        // 110% is not allowed
+        assert!(!Action::SetChannelRelativeVolume(0, 0.10)
+            .handle(&mut app)
+            .unwrap());
+        assert!(!Action::SetChannelAbsoluteVolume(0, 1.10)
+            .handle(&mut app)
+            .unwrap());
+
+        // 90% is allowed
+        assert!(Action::SetChannelRelativeVolume(0, -0.10)
+            .handle(&mut app)
+            .unwrap());
+        assert!(Action::SetChannelAbsoluteVolume(0, 0.90)
+            .handle(&mut app)
+            .unwrap());
+
+        // 100% is allowed
+        assert!(Action::SetChannelAbsoluteVolume(0, 1.00)
+            .handle(&mut app)
+            .unwrap());
+    }
+
+    #[test]
+    fn channel_volume_out_of_range_is_noop() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        app.config.enforce_max_volume = false;
+
+        // The fixture node only has 2 channels (indices 0 and 1)
+        assert!(!Action::SetChannelRelativeVolume(2, -0.10)
+            .handle(&mut app)
+            .unwrap());
+        assert!(!Action::SetChannelAbsoluteVolume(2, 0.90)
+            .handle(&mut app)
+            .unwrap());
     }
 
     #[test]

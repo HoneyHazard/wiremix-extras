@@ -783,7 +783,7 @@ impl<'a> View<'a> {
         &self,
         node_id: ObjectId,
         channel: usize,
-        volume: f32,
+        adjustment: VolumeAdjustment,
         max: Option<f32>,
     ) -> bool {
         let Some(node) = self.nodes.get(&node_id) else {
@@ -795,7 +795,12 @@ impl<'a> View<'a> {
             return false;
         };
 
-        let new_volume = volume.max(0.0).powi(3);
+        let new_volume = match adjustment {
+            VolumeAdjustment::Relative(delta) => {
+                (slot.cbrt() + delta).max(0.0).powi(3)
+            }
+            VolumeAdjustment::Absolute(volume) => volume.max(0.0).powi(3),
+        };
 
         if let Some(max) = max {
             if (new_volume.cbrt() * 100.0).round() > max {
