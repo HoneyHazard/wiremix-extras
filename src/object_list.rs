@@ -1100,6 +1100,57 @@ mod tests {
     }
 
     #[test]
+    fn channel_mode_shrinks_visible_objects_for_lazy_capture() {
+        // lazy_capture (App::update_capturing) starts/stops peak-level
+        // capture based on ObjectList::visible_objects() - this proves
+        // that set correctly shrinks when channel mode makes a node too
+        // tall to fit, exactly mirroring visible_count() above but at the
+        // API lazy_capture actually consumes. Capture is inherently
+        // per-node (ObjectId), never per-channel-row, so no new plumbing
+        // is needed here - this is a regression guard confirming that
+        // stays true, not new production behavior.
+        let mut state = State::default();
+        let wirehose = mock::WirehoseHandle::default();
+
+        let object_id = ObjectId::from_raw_id(1);
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Multichannel node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_media_name(String::from("Media name"));
+        props.set_node_name(String::from("multi"));
+        props.set_object_serial(1);
+        state.update(StateEvent::NodeProperties { object_id, props });
+        state.update(StateEvent::NodeVolumes {
+            object_id,
+            volumes: vec![0.0, 0.0, 0.0, 0.0],
+        });
+        state.update(StateEvent::NodeMute {
+            object_id,
+            mute: false,
+        });
+
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        let full_default_height =
+            NodeWidget::height().saturating_add(NodeWidget::spacing());
+        let rect = Rect::new(0, 0, 80, full_default_height + 2);
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        let visible = object_list.visible_objects(&rect, &view);
+        assert!(visible.contains(&object_id));
+
+        object_list.channel_mode = true;
+        let visible = object_list.visible_objects(&rect, &view);
+        assert!(!visible.contains(&object_id));
+    }
+
+    #[test]
     fn visible_objects_changes_with_scroll() {
         let (state, wirehose) = init();
         let view = View::from(
