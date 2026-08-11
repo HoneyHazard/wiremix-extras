@@ -38,11 +38,67 @@ fn render_peak(peak: f32, area: Rect) -> (usize, usize, usize) {
     (active_size, overload_size, inactive_size)
 }
 
-pub fn render_stereo(
+/// One side's (or mono gauge's) inactive/active/overload glyphs, resolved
+/// to whichever concrete characters should actually be drawn - either the
+/// stock `meter_left`/`meter_right` ones, or (for a channel-row gauge) a
+/// `meter_channel_*` override falling back to the stock glyph wherever the
+/// override isn't set.
+struct MeterChars<'a> {
+    inactive: &'a str,
+    active: &'a str,
+    overload: &'a str,
+}
+
+fn render_side(
+    area: Rect,
+    buf: &mut Buffer,
+    peak: f32,
+    chars: &MeterChars,
+    theme: &crate::config::Theme,
+    alignment: Alignment,
+) {
+    let (active_peak, overload_peak, inactive_peak) = render_peak(peak, area);
+
+    let inactive = Span::styled(
+        chars.inactive.repeat(inactive_peak),
+        theme.meter_inactive,
+    );
+    let overload = Span::styled(
+        chars.overload.repeat(overload_peak),
+        theme.meter_overload,
+    );
+    let active =
+        Span::styled(chars.active.repeat(active_peak), theme.meter_active);
+
+    let spans = match alignment {
+        // Left side: filled portion sits adjacent to the center marker (the
+        // bar's own right edge) and grows outward, away from center.
+        Alignment::Right => vec![inactive, overload, active],
+        // Right side (and mono): mirror image - filled adjacent to center,
+        // growing outward to the right.
+        _ => vec![active, overload, inactive],
+    };
+
+    Line::from(spans).alignment(alignment).render(area, buf);
+}
+
+/// The two-char "live" indicator between a stereo gauge's left and right
+/// halves.
+struct CenterChars<'a> {
+    left_inactive: &'a str,
+    left_active: &'a str,
+    right_inactive: &'a str,
+    right_active: &'a str,
+}
+
+fn render_stereo_core(
     meter_area: Rect,
     buf: &mut Buffer,
     peaks: Option<(f32, f32)>,
     config: &Config,
+    left: MeterChars,
+    right: MeterChars,
+    center: CenterChars,
 ) {
     let layout = Layout::default()
         .direction(Direction::Horizontal)
@@ -59,72 +115,45 @@ pub fn render_stereo(
 
     let (left_peak, right_peak) = peaks.unwrap_or_default();
 
-    let area = meter_left;
-    let (active_peak, overload_peak, inactive_peak) =
-        render_peak(left_peak, area);
-    Line::from(vec![
-        Span::styled(
-            config.char_set.meter_left_inactive.repeat(inactive_peak),
-            config.theme.meter_inactive,
-        ),
-        Span::styled(
-            config.char_set.meter_left_overload.repeat(overload_peak),
-            config.theme.meter_overload,
-        ),
-        Span::styled(
-            config.char_set.meter_left_active.repeat(active_peak),
-            config.theme.meter_active,
-        ),
-    ])
-    .alignment(Alignment::Right)
-    .render(area, buf);
-
-    let area = meter_right;
-    let (active_peak, overload_peak, inactive_peak) =
-        render_peak(right_peak, area);
-    Line::from(vec![
-        Span::styled(
-            config.char_set.meter_right_active.repeat(active_peak),
-            config.theme.meter_active,
-        ),
-        Span::styled(
-            config.char_set.meter_right_overload.repeat(overload_peak),
-            config.theme.meter_overload,
-        ),
-        Span::styled(
-            config.char_set.meter_right_inactive.repeat(inactive_peak),
-            config.theme.meter_inactive,
-        ),
-    ])
-    .render(area, buf);
+    render_side(
+        meter_left,
+        buf,
+        left_peak,
+        &left,
+        &config.theme,
+        Alignment::Right,
+    );
+    render_side(
+        meter_right,
+        buf,
+        right_peak,
+        &right,
+        &config.theme,
+        Alignment::Left,
+    );
 
     let live_line = if peaks.is_some() {
         Line::from(Span::styled(
-            format!(
-                "{}{}",
-                config.char_set.meter_center_left_active,
-                config.char_set.meter_center_right_active,
-            ),
+            format!("{}{}", center.left_active, center.right_active),
             config.theme.meter_center_active,
         ))
     } else {
         Line::from(Span::styled(
-            format!(
-                "{}{}",
-                config.char_set.meter_center_left_inactive,
-                config.char_set.meter_center_right_inactive
-            ),
+            format!("{}{}", center.left_inactive, center.right_inactive),
             config.theme.meter_center_inactive,
         ))
     };
     live_line.render(meter_live, buf);
 }
 
-pub fn render_mono(
+fn render_mono_core(
     meter_area: Rect,
     buf: &mut Buffer,
     peak: Option<f32>,
     config: &Config,
+    mono: MeterChars,
+    center_inactive: &str,
+    center_active: &str,
 ) {
     let mono_peak = peak.unwrap_or_default();
 
@@ -139,35 +168,182 @@ pub fn render_mono(
     let meter_live = layout[0];
     let meter_mono = layout[1];
 
-    let area = meter_mono;
-    let (active_peak, overload_peak, inactive_peak) =
-        render_peak(mono_peak, area);
-    Line::from(vec![
-        Span::styled(
-            config.char_set.meter_right_active.repeat(active_peak),
-            config.theme.meter_active,
-        ),
-        Span::styled(
-            config.char_set.meter_right_overload.repeat(overload_peak),
-            config.theme.meter_overload,
-        ),
-        Span::styled(
-            config.char_set.meter_right_inactive.repeat(inactive_peak),
-            config.theme.meter_inactive,
-        ),
-    ])
-    .render(area, buf);
+    render_side(
+        meter_mono,
+        buf,
+        mono_peak,
+        &mono,
+        &config.theme,
+        Alignment::Left,
+    );
 
     let live_line = if peak.is_some() {
         Line::from(Span::styled(
-            &config.char_set.meter_center_right_active,
+            center_active,
             config.theme.meter_center_active,
         ))
     } else {
         Line::from(Span::styled(
-            &config.char_set.meter_center_right_inactive,
+            center_inactive,
             config.theme.meter_center_inactive,
         ))
     };
     live_line.render(meter_live, buf);
+}
+
+pub fn render_stereo(
+    meter_area: Rect,
+    buf: &mut Buffer,
+    peaks: Option<(f32, f32)>,
+    config: &Config,
+) {
+    let cs = &config.char_set;
+    render_stereo_core(
+        meter_area,
+        buf,
+        peaks,
+        config,
+        MeterChars {
+            inactive: &cs.meter_left_inactive,
+            active: &cs.meter_left_active,
+            overload: &cs.meter_left_overload,
+        },
+        MeterChars {
+            inactive: &cs.meter_right_inactive,
+            active: &cs.meter_right_active,
+            overload: &cs.meter_right_overload,
+        },
+        CenterChars {
+            left_inactive: &cs.meter_center_left_inactive,
+            left_active: &cs.meter_center_left_active,
+            right_inactive: &cs.meter_center_right_inactive,
+            right_active: &cs.meter_center_right_active,
+        },
+    );
+}
+
+pub fn render_mono(
+    meter_area: Rect,
+    buf: &mut Buffer,
+    peak: Option<f32>,
+    config: &Config,
+) {
+    let cs = &config.char_set;
+    render_mono_core(
+        meter_area,
+        buf,
+        peak,
+        config,
+        MeterChars {
+            inactive: &cs.meter_right_inactive,
+            active: &cs.meter_right_active,
+            overload: &cs.meter_right_overload,
+        },
+        &cs.meter_center_right_inactive,
+        &cs.meter_center_right_active,
+    );
+}
+
+/// Same as [`render_stereo`], but for a single channel row within a split
+/// block (`ChannelRowWidget`/`RadiatingRowWidget`) - each `meter_channel_*`
+/// glyph is used if the active char_set sets it, otherwise falls back to
+/// the same stock glyph [`render_stereo`] itself would use, so a theme that
+/// hasn't opted in to a distinct split-row look renders identically to a
+/// whole node's own meter.
+pub fn render_channel_stereo(
+    meter_area: Rect,
+    buf: &mut Buffer,
+    peaks: Option<(f32, f32)>,
+    config: &Config,
+) {
+    let cs = &config.char_set;
+    render_stereo_core(
+        meter_area,
+        buf,
+        peaks,
+        config,
+        MeterChars {
+            inactive: cs
+                .meter_channel_left_inactive
+                .as_deref()
+                .unwrap_or(&cs.meter_left_inactive),
+            active: cs
+                .meter_channel_left_active
+                .as_deref()
+                .unwrap_or(&cs.meter_left_active),
+            overload: cs
+                .meter_channel_left_overload
+                .as_deref()
+                .unwrap_or(&cs.meter_left_overload),
+        },
+        MeterChars {
+            inactive: cs
+                .meter_channel_right_inactive
+                .as_deref()
+                .unwrap_or(&cs.meter_right_inactive),
+            active: cs
+                .meter_channel_right_active
+                .as_deref()
+                .unwrap_or(&cs.meter_right_active),
+            overload: cs
+                .meter_channel_right_overload
+                .as_deref()
+                .unwrap_or(&cs.meter_right_overload),
+        },
+        CenterChars {
+            left_inactive: cs
+                .meter_channel_center_left_inactive
+                .as_deref()
+                .unwrap_or(&cs.meter_center_left_inactive),
+            left_active: cs
+                .meter_channel_center_left_active
+                .as_deref()
+                .unwrap_or(&cs.meter_center_left_active),
+            right_inactive: cs
+                .meter_channel_center_right_inactive
+                .as_deref()
+                .unwrap_or(&cs.meter_center_right_inactive),
+            right_active: cs
+                .meter_channel_center_right_active
+                .as_deref()
+                .unwrap_or(&cs.meter_center_right_active),
+        },
+    );
+}
+
+/// Same as [`render_mono`], but for a single channel row within a split
+/// block - see [`render_channel_stereo`] for the fallback rule.
+pub fn render_channel_mono(
+    meter_area: Rect,
+    buf: &mut Buffer,
+    peak: Option<f32>,
+    config: &Config,
+) {
+    let cs = &config.char_set;
+    render_mono_core(
+        meter_area,
+        buf,
+        peak,
+        config,
+        MeterChars {
+            inactive: cs
+                .meter_channel_right_inactive
+                .as_deref()
+                .unwrap_or(&cs.meter_right_inactive),
+            active: cs
+                .meter_channel_right_active
+                .as_deref()
+                .unwrap_or(&cs.meter_right_active),
+            overload: cs
+                .meter_channel_right_overload
+                .as_deref()
+                .unwrap_or(&cs.meter_right_overload),
+        },
+        cs.meter_channel_center_right_inactive
+            .as_deref()
+            .unwrap_or(&cs.meter_center_right_inactive),
+        cs.meter_channel_center_right_active
+            .as_deref()
+            .unwrap_or(&cs.meter_center_right_active),
+    );
 }

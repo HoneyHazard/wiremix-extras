@@ -262,6 +262,25 @@ pub struct CharSet {
     pub meter_center_left_active: String,
     pub meter_center_right_inactive: String,
     pub meter_center_right_active: String,
+    /// Per-channel-row monitor overrides (`split_style = "stacked"`'s
+    /// `ChannelRowWidget` rows and `split_style = "radiating"`'s
+    /// `RadiatingRowWidget` rows) - `None` means "not configured", which
+    /// falls back to the corresponding `meter_left`/`meter_right`/
+    /// `meter_center_*` field above, so a row's monitor gauge looks
+    /// identical to a whole node's until a theme opts in to something
+    /// distinct for split rows specifically. The classic single-row
+    /// `MeterWidget` never consults these - only per-row split monitors
+    /// do.
+    pub meter_channel_left_inactive: Option<String>,
+    pub meter_channel_left_active: Option<String>,
+    pub meter_channel_left_overload: Option<String>,
+    pub meter_channel_right_inactive: Option<String>,
+    pub meter_channel_right_active: Option<String>,
+    pub meter_channel_right_overload: Option<String>,
+    pub meter_channel_center_left_inactive: Option<String>,
+    pub meter_channel_center_left_active: Option<String>,
+    pub meter_channel_center_right_inactive: Option<String>,
+    pub meter_channel_center_right_active: Option<String>,
     pub dropdown_icon: String,
     pub dropdown_selector: String,
     pub dropdown_more: String,
