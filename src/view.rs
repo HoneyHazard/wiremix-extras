@@ -721,9 +721,15 @@ impl<'a> View<'a> {
         }
     }
 
-    /// Changes the volume of the provided node. If max volume is provided,
-    /// won't change volume if result would be greater than max. Returns true
-    /// if volume was changed, otherwise false.
+    /// Changes the volume of the provided node - every channel together
+    /// (this is the "linked"/ganged setting mode; see `channel_volume` for
+    /// the single-channel equivalent). A `Relative` adjustment applies the
+    /// same delta to each channel's own current value, preserving any
+    /// existing imbalance between them; an `Absolute` adjustment sets
+    /// every channel to the same explicit target, same as always. If max
+    /// volume is provided, won't change volume if any channel's result
+    /// would be greater than max. Returns true if volume was changed,
+    /// otherwise false.
     pub fn volume(
         &self,
         node_id: ObjectId,
@@ -739,9 +745,16 @@ impl<'a> View<'a> {
             return false;
         }
         match adjustment {
+            // Relative deltas apply to each channel's own current value
+            // independently, exactly like an absolute set applies the
+            // same target to every channel - existing imbalance between
+            // channels is preserved rather than being collapsed to a mean
+            // first (matches pulsemixer: +10 on a=30/b=50 gives a=40/b=60,
+            // not a=b=50).
             VolumeAdjustment::Relative(delta) => {
-                let avg = volumes.iter().sum::<f32>() / volumes.len() as f32;
-                volumes.fill((avg.cbrt() + delta).max(0.0).powi(3));
+                for volume in volumes.iter_mut() {
+                    *volume = (volume.cbrt() + delta).max(0.0).powi(3);
+                }
             }
             VolumeAdjustment::Absolute(volume) => {
                 volumes.fill(volume.max(0.0).powi(3));

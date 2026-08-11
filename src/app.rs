@@ -1314,6 +1314,66 @@ mod tests {
     }
 
     #[test]
+    fn relative_volume_preserves_existing_channel_imbalance() {
+        // Whole-node relative volume (h/l, arrows, scroll) must apply the
+        // same delta to each channel's own current value, not collapse to
+        // a mean first - matching pulsemixer: +10 on a=30/b=50 gives
+        // a=40/b=60, not a=b=50. Absolute/set operations are unaffected
+        // (still fill every channel to the same explicit target).
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str("");
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        let object_id = ObjectId::from_raw_id(0);
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Test node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_media_name(String::from("Media name"));
+        props.set_node_name(String::from("Node name"));
+        props.set_object_serial(0);
+        let events = vec![
+            StateEvent::NodeProperties { object_id, props },
+            StateEvent::NodePositions {
+                object_id,
+                positions: vec![0, 1],
+            },
+            StateEvent::NodeVolumes {
+                object_id,
+                // Displayed as 30%/50% (raw = cube of the displayed
+                // fraction, matching how volumes are stored elsewhere).
+                volumes: vec![0.3_f32.powi(3), 0.5_f32.powi(3)],
+            },
+            StateEvent::NodeMute {
+                object_id,
+                mute: false,
+            },
+        ];
+        for event in events {
+            event.handle(&mut app).unwrap();
+        }
+        app.view =
+            View::from(&wirehose, &app.state, &app.config.names, &Vec::new());
+        Action::SelectObject(object_id).handle(&mut app).unwrap();
+
+        assert!(Action::SetRelativeVolume(0.10).handle(&mut app).unwrap());
+
+        let dispatched = commands.borrow_mut().pop_back();
+        let Some(mock::MockCommand::NodeVolumes(dispatched_id, volumes)) =
+            dispatched
+        else {
+            panic!("expected a NodeVolumes command, got {dispatched:?}");
+        };
+        assert_eq!(dispatched_id, object_id);
+        assert_eq!(volumes.len(), 2);
+        // 30% + 10% = 40%, 50% + 10% = 60% - each channel's own value, not
+        // both collapsed to (30+50)/2 + 10 = 50%.
+        assert!((volumes[0].cbrt() * 100.0 - 40.0).abs() < 0.5);
+        assert!((volumes[1].cbrt() * 100.0 - 60.0).abs() < 0.5);
+    }
+
+    #[test]
     fn channel_mode_routes_whole_node_volume_keys_to_selected_channel() {
         let wirehose = mock::WirehoseHandle::default();
         let mut app = fixture(&wirehose);

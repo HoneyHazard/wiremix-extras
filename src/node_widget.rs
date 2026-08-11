@@ -146,14 +146,13 @@ impl<'a> NodeWidget<'a> {
                 .split(row)
         };
 
+        // The header row deliberately never shows the selector marker in
+        // Channel mode - only the individually-targeted channel row does,
+        // so there's exactly one place to look for "which channel is
+        // this" rather than two markers competing for attention. The
+        // marker_area column is still reserved here (unrendered) purely
+        // so the header text lines up with the channel rows below it.
         let header_split = row_layout(rows[0]);
-        if self.selected {
-            Span::styled(
-                &self.config.char_set.selector_middle,
-                self.config.theme.selector,
-            )
-            .render(header_split[0], buf);
-        }
         HeaderWidget::new(self.config, self.device_kind, self.node).render(
             header_split[1],
             buf,
@@ -656,14 +655,27 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
 
         let max_volume = self.config.max_volume_percent / 100.0;
 
+        // Two separate Fill(1) constraints can end up with unequal widths
+        // when the remaining space is odd (Ratatui's Fill distribution
+        // isn't guaranteed symmetric) - identical numerically-equal L/R
+        // volumes would then render as visibly different bar lengths just
+        // from that width difference. Computing one shared bar_width and
+        // giving both bars the same explicit Length(bar_width) makes that
+        // impossible by construction; any odd leftover column is simply
+        // unused rather than handed to one side.
+        let fixed_width = 4 + 1 + 4; // label_l + center + label_r
+        let spacing_width = 4; // 4 gaps between the 5 segments, at 1 each
+        let bar_width =
+            area.width.saturating_sub(fixed_width + spacing_width) / 2;
+
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(4), // label_l
-                Constraint::Fill(1),   // bar_l
-                Constraint::Length(1), // center
-                Constraint::Fill(1),   // bar_r
-                Constraint::Length(4), // label_r
+                Constraint::Length(4),         // label_l
+                Constraint::Length(bar_width), // bar_l
+                Constraint::Length(1),         // center
+                Constraint::Length(bar_width), // bar_r
+                Constraint::Length(4),         // label_r
             ])
             .spacing(1)
             .split(area);
@@ -829,13 +841,29 @@ impl StatefulWidget for ChannelRowWidget<'_> {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(10), // volume_label, e.g. "AUX63 100%"
+                Constraint::Length(11), // volume_label: label_col + percent_col
                 Constraint::Min(0),     // volume_bar
             ])
             .spacing(1)
             .split(area);
         let volume_label = layout[0];
         let volume_bar = layout[1];
+
+        // label_col and percent_col are independently right-aligned, so a
+        // channel's label always lands in the same column regardless of
+        // how many digits its own (or any other row's) percentage has -
+        // "FL 100%" / "FL  50%" / "FL   3%", not "FL 100%" / " FL 50%" /
+        // "  FL 3%".
+        let label_split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(5), // label_col, e.g. "AUX63"
+                Constraint::Length(5), // percent_col, e.g. "100%"/"muted"
+            ])
+            .spacing(1)
+            .split(volume_label);
+        let label_col = label_split[0];
+        let percent_col = label_split[1];
 
         let volume = self
             .node
@@ -854,12 +882,16 @@ impl StatefulWidget for ChannelRowWidget<'_> {
             .map(|&position| channel_pairing::channel_name(position))
             .unwrap_or_else(|| channel_index.to_string());
 
+        Line::from(Span::styled(&label, self.config.theme.volume))
+            .alignment(Alignment::Right)
+            .render(label_col, buf);
+
         Line::from(Span::styled(
-            format!("{label} {percent}%"),
+            format!("{percent}%"),
             self.config.theme.volume,
         ))
         .alignment(Alignment::Right)
-        .render(volume_label, buf);
+        .render(percent_col, buf);
 
         let count = ((volume.clamp(0.0, max_volume) / max_volume)
             * volume_bar.width as f32)
@@ -877,7 +909,9 @@ impl StatefulWidget for ChannelRowWidget<'_> {
         .render(volume_bar, buf);
 
         if self.node.mute {
-            Line::from(format!("{label} muted")).render(volume_label, buf);
+            Line::from("muted")
+                .alignment(Alignment::Right)
+                .render(percent_col, buf);
         }
 
         mouse_areas.push((
@@ -1047,6 +1081,32 @@ mod tests {
     }
 
     #[test]
+    fn stereo_radiating_bars_have_symmetric_width_for_equal_volumes() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(
+            Some(vec![fl, fr]),
+            vec![0.5_f32.powi(3), 0.5_f32.powi(3)],
+        );
+        let config =
+            config::Config::from_toml_str("show_channel_volumes = true");
+
+        // render_to_string uses a 40-wide area - the remaining bar space
+        // after fixed segments (40 - 13 = 27) is odd, exactly the case
+        // that used to give the two Fill(1) bars unequal widths.
+        let rendered = render_to_string(&config, &node);
+
+        let filled = config.char_set.volume_filled.as_str();
+        let center_index = rendered.find('|').expect("center marker present");
+        let left_filled = rendered[..center_index].matches(filled).count();
+        let right_filled = rendered[center_index + 1..].matches(filled).count();
+        assert_eq!(
+            left_filled, right_filled,
+            "equal L/R volumes must fill an equal number of characters on each side"
+        );
+    }
+
+    #[test]
     fn stereo_pair_finds_the_first_named_lr_pair() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
@@ -1149,8 +1209,33 @@ mod tests {
         let lines = render_node_lines(&config, &node, true, false, None);
 
         assert_eq!(lines.len(), 3); // header + 2 channel rows
-        assert!(lines[1].contains("FL 100%"));
-        assert!(lines[2].contains("FR 0%"));
+                                    // label_col and percent_col are independent fixed-width columns
+                                    // (5 + 1 spacing + 5), so the gap between label and percent
+                                    // varies with the percentage's own digit count - not a single
+                                    // "{label} {percent}%" string right-aligned as one unit.
+        assert!(lines[1].contains("FL  100%"));
+        assert!(lines[2].contains("FR    0%"));
+    }
+
+    #[test]
+    fn channel_mode_label_and_percent_are_independently_aligned_columns() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        // Very different percent widths (100% vs 3%) - a shared
+        // right-aligned "{label} {percent}%" string would shift the
+        // labels relative to each other; independent columns keep them
+        // in the same place regardless.
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.03_f32.powi(3)]);
+        let config = config::Config::from_toml_str("");
+
+        let lines = render_node_lines(&config, &node, true, false, None);
+
+        let fl_index = lines[1].find("FL").expect("FL label present");
+        let fr_index = lines[2].find("FR").expect("FR label present");
+        assert_eq!(
+            fl_index, fr_index,
+            "labels should start at the same column regardless of percent width"
+        );
     }
 
     #[test]
@@ -1160,8 +1245,8 @@ mod tests {
 
         let lines = render_node_lines(&config, &node, true, false, None);
 
-        assert!(lines[1].contains("0 100%"));
-        assert!(lines[2].contains("1 0%"));
+        assert!(lines[1].contains("0  100%"));
+        assert!(lines[2].contains("1    0%"));
     }
 
     #[test]
@@ -1173,8 +1258,8 @@ mod tests {
 
         let lines = render_node_lines(&config, &node, true, false, None);
 
-        assert!(lines[1].contains("AUX0 100%"));
-        assert!(lines[2].contains("AUX1 0%"));
+        assert!(lines[1].contains("AUX0  100%"));
+        assert!(lines[2].contains("AUX1    0%"));
     }
 
     #[test]
@@ -1215,5 +1300,20 @@ mod tests {
             render_node_lines(&config, &node, true, false, Some(0));
         assert!(!not_selected[1].contains(marker));
         assert!(!not_selected[2].contains(marker));
+    }
+
+    #[test]
+    fn channel_mode_never_marks_the_header_row() {
+        // The header row never shows the selector marker in Channel mode,
+        // even when the node is selected - only the individually-targeted
+        // channel row should, so there's exactly one marker to look for.
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        let config = config::Config::from_toml_str("");
+        let marker = config.char_set.selector_middle.as_str();
+
+        let lines = render_node_lines(&config, &node, true, true, Some(0));
+        assert!(!lines[0].contains(marker));
     }
 }

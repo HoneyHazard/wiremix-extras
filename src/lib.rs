@@ -25,10 +25,15 @@ mod mock {
     use std::collections::VecDeque;
     use std::sync::{atomic::AtomicBool, Arc};
 
+    // Variants intentionally share the `Node` prefix, mirroring
+    // CommandSender's own node_capture_start/node_capture_stop/
+    // node_volumes method names.
+    #[allow(clippy::enum_variant_names)]
     #[derive(Debug, PartialEq)]
     pub enum MockCommand {
         NodeCaptureStart(ObjectId),
         NodeCaptureStop(ObjectId),
+        NodeVolumes(ObjectId, Vec<f32>),
     }
 
     #[derive(Default)]
@@ -69,7 +74,13 @@ mod mock {
             }
         }
         fn node_mute(&self, _object_id: ObjectId, _mute: bool) {}
-        fn node_volumes(&self, _object_id: ObjectId, _volumes: Vec<f32>) {}
+        fn node_volumes(&self, object_id: ObjectId, volumes: Vec<f32>) {
+            if let Some(commands) = self.commands {
+                commands
+                    .borrow_mut()
+                    .push_back(MockCommand::NodeVolumes(object_id, volumes));
+            }
+        }
         fn device_mute(
             &self,
             _object_id: ObjectId,
