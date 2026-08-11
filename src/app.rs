@@ -309,6 +309,7 @@ impl<'a> App<'a> {
             tab.list.channel_display = config.channel_display;
             tab.list.unified_imbalance = config.unified_imbalance;
             tab.list.split_style = config.split_style;
+            tab.list.pair_label_style = config.pair_label_style;
         }
 
         // Update peaks with VU-meter-style ballistics
@@ -1009,6 +1010,7 @@ mod tests {
             unified_imbalance: Default::default(),
             split_style: Default::default(),
             channel_mode: Default::default(),
+            pair_label_style: Default::default(),
             filters: Default::default(),
         };
 
@@ -1114,6 +1116,7 @@ mod tests {
             unified_imbalance: Default::default(),
             split_style: Default::default(),
             channel_mode: Default::default(),
+            pair_label_style: Default::default(),
             filters: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);

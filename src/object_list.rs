@@ -14,7 +14,8 @@ use smallvec::smallvec;
 
 use crate::app::{Action, MouseArea};
 use crate::config::{
-    ChannelDisplay, ChannelState, Config, SplitStyle, UnifiedImbalance,
+    ChannelDisplay, ChannelState, Config, PairLabelStyle, SplitStyle,
+    UnifiedImbalance,
 };
 use crate::device_kind::DeviceKind;
 use crate::device_widget::DeviceWidget;
@@ -61,6 +62,9 @@ pub struct ObjectList {
     /// See `Config::split_style`. Seeded from config; no runtime toggle
     /// yet.
     pub split_style: SplitStyle,
+    /// See `Config::pair_label_style`. Seeded from config; no runtime
+    /// toggle yet.
+    pub pair_label_style: PairLabelStyle,
 }
 
 impl ObjectList {
@@ -140,13 +144,14 @@ impl ObjectList {
         };
     }
 
-    /// Bundles the four display/setting axes for passing to `NodeWidget`.
+    /// Bundles the display/setting axes for passing to `NodeWidget`.
     pub fn channel_state(&self) -> ChannelState {
         ChannelState {
             channel_mode: self.channel_mode,
             channel_display: self.channel_display,
             unified_imbalance: self.unified_imbalance,
             split_style: self.split_style,
+            pair_label_style: self.pair_label_style,
         }
     }
 

@@ -93,10 +93,12 @@ pub struct Opt {
     pub unified_imbalance: Option<config::UnifiedImbalance>,
 
     /// Rendering style whenever a node's volume actually is split:
-    /// "radiating" (two bars sharing one row, only for a detected 2-channel
-    /// left/right pair) or "stacked" (one row per channel, always
-    /// available). Falls back to "stacked" automatically for anything that
-    /// isn't a detected pair, regardless of this setting
+    /// "radiating" (a lone simple pair gets one row with two bars growing
+    /// from a shared center marker; anything with more channels - extra
+    /// singles alongside a pair, more than one pair, or no pair at all -
+    /// gets one row per detected pair/channel instead, each pair still
+    /// radiating on its own row) or "stacked" (one row per channel, always,
+    /// regardless of pairing)
     #[clap(long, value_parser = clap::value_parser!(config::SplitStyle))]
     pub split_style: Option<config::SplitStyle>,
 
@@ -110,6 +112,12 @@ pub struct Opt {
     /// ToggleChannelMode)
     #[clap(long, conflicts_with = "no_channel_mode")]
     pub channel_mode: bool,
+
+    /// How a radiating pair row labels which physical pair it's showing,
+    /// once more than one row can appear in the same node's split display
+    /// (a lone pair needs no label): "verbose" ("F L/R") or "short" ("F")
+    #[clap(long, value_parser = clap::value_parser!(config::PairLabelStyle))]
+    pub pair_label_style: Option<config::PairLabelStyle>,
 
     #[cfg(debug_assertions)]
     #[clap(short, long)]

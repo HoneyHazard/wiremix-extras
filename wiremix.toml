@@ -74,14 +74,28 @@ unified_imbalance = "none"
 # Rendering style whenever a node's volume actually is split
 # (channel_display = "always", unified_imbalance = "split" triggering for
 # a currently-imbalanced node, or channel_mode = true - see below):
-# "radiating" - two bars sharing one row, growing outward from a shared
-#   center marker. Only ever used for a detected stereo (or other named
-#   left/right) channel pair.
-# "stacked" - one row per channel. Used for anything that isn't a
-#   detected pair (an odd channel count, or channels with no left/right
-#   naming) regardless of this setting, since radiating has nothing to
-#   grow from center for those.
+# "radiating" - a node with exactly one simple stereo (or other named
+#   left/right) pair and nothing else gets a single row with two bars
+#   growing outward from a shared center marker. A node with more going
+#   on (extra channels alongside a pair, more than one pair, e.g. a 5.1/
+#   7.1 device, or no pair at all) instead gets one row per detected
+#   pair/channel - a pair still radiates from a center marker on its own
+#   row (labeled with its group name - see pair_label_style below), and
+#   an unpaired channel occupies just the left half of that same column
+#   layout (its own label/percentage/bar, with the divider and right
+#   side left blank) so every row's bar starts and ends at the same
+#   columns and represents the same volume-to-character scale.
+# "stacked" - one row per channel, always, regardless of any pairing.
 split_style = "radiating"
+
+# Only consulted when split_style = "radiating" and more than one row
+# ends up in the same node's split display (see split_style above) - a
+# lone pair takes the single-row fast path above and never needs a
+# label. How a radiating pair row's group label is formatted:
+# "verbose" - spells out that it's a pair, e.g. "F L/R" for the FL/FR
+#   pair, "R L/R" for RL/RR (today's default).
+# "short" - just the group name, e.g. "F", "R".
+pair_label_style = "verbose"
 
 # Whether volume keys (h/l, Left/Right, 0-9, etc.) adjust every channel
 # of the selected item together (false, linked/ganged - today's default)

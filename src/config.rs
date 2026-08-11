@@ -58,14 +58,23 @@ pub struct Config {
     /// Rendering style whenever a node's volume actually is split
     /// (`channel_display = "always"`, `unified_imbalance = "split"`
     /// triggering for one imbalanced node, or `channel_mode` being on).
-    /// "radiating" only applies to a detected 2-channel left/right pair;
-    /// anything else always renders "stacked" regardless of this setting.
+    /// "radiating" renders a lone simple pair on one fixed-height row;
+    /// anything with more channels (extra singles alongside a pair, more
+    /// than one pair, or no pair at all) gets one row per detected
+    /// pair/channel instead, each pair still radiating on its own row.
     pub split_style: SplitStyle,
     /// Initial value of the "Channel mode" setting axis (linked vs
     /// individual - see `Action::ToggleChannelMode`). Independent of
     /// `channel_display`/`unified_imbalance`/`split_style`, which
     /// control *display*, not which channels an adjustment affects.
     pub channel_mode: bool,
+    /// How a radiating pair row (split_style = "radiating") labels which
+    /// physical pair it's showing - only matters once more than one row
+    /// can appear in the same node's split display (a lone pair takes
+    /// the classic unlabeled single-row fast path instead). "verbose"
+    /// spells out that it's a pair ("F L/R"); "short" is just the group
+    /// name ("F").
+    pub pair_label_style: PairLabelStyle,
     pub filters: Vec<MatchCondition>,
 }
 
@@ -118,6 +127,8 @@ struct ConfigFile {
     split_style: Option<SplitStyle>,
     #[serde(default = "default_channel_mode")]
     channel_mode: bool,
+    #[serde(default = "default_pair_label_style")]
+    pair_label_style: Option<PairLabelStyle>,
     #[serde(default = "Filter::defaults", deserialize_with = "Filter::merge")]
     filters: Vec<Filter>,
 }
@@ -162,19 +173,31 @@ pub enum SplitStyle {
     Stacked,
 }
 
-/// Bundles the four independent axes that decide how a node's volume is
+#[derive(
+    Deserialize, Default, Debug, Clone, Copy, PartialEq, clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum PairLabelStyle {
+    #[default]
+    Verbose,
+    Short,
+}
+
+/// Bundles the independent axes that decide how a node's volume is
 /// displayed/set, so functions that need all of them (mainly
-/// `NodeWidget`/its height calculation) don't need four separate
-/// parameters. `channel_mode` and `channel_display` are runtime-mutable
-/// (see `ObjectList`); `unified_imbalance`/`split_style` currently aren't
-/// (no toggle action yet - config-only), but live here alongside the
-/// others so adding one later doesn't change this bundle's shape.
+/// `NodeWidget`/its height calculation) don't need a separate parameter
+/// per axis. `channel_mode` and `channel_display` are runtime-mutable
+/// (see `ObjectList`); `unified_imbalance`/`split_style`/
+/// `pair_label_style` currently aren't (no toggle action yet -
+/// config-only), but live here alongside the others so adding one later
+/// doesn't change this bundle's shape.
 #[derive(Debug, Clone, Copy)]
 pub struct ChannelState {
     pub channel_mode: bool,
     pub channel_display: ChannelDisplay,
     pub unified_imbalance: UnifiedImbalance,
     pub split_style: SplitStyle,
+    pub pair_label_style: PairLabelStyle,
 }
 
 #[derive(Deserialize, Debug)]
@@ -372,6 +395,10 @@ fn default_channel_mode() -> bool {
     false
 }
 
+fn default_pair_label_style() -> Option<PairLabelStyle> {
+    Some(PairLabelStyle::default())
+}
+
 impl ConfigFile {
     /// Override configuration with command-line arguments.
     pub fn apply_opt(&mut self, opt: &Opt) {
@@ -450,6 +477,10 @@ impl ConfigFile {
         if opt.channel_mode {
             self.channel_mode = true;
         }
+
+        if let Some(pair_label_style) = &opt.pair_label_style {
+            self.pair_label_style = Some(*pair_label_style);
+        }
     }
 }
 
@@ -524,6 +555,7 @@ impl TryFrom<ConfigFile> for Config {
                 .unwrap_or_default(),
             split_style: config_file.split_style.unwrap_or_default(),
             channel_mode: config_file.channel_mode,
+            pair_label_style: config_file.pair_label_style.unwrap_or_default(),
             filters,
         })
     }
@@ -613,6 +645,7 @@ pub mod strict {
         unified_imbalance: Option<UnifiedImbalance>,
         split_style: Option<SplitStyle>,
         channel_mode: bool,
+        pair_label_style: Option<PairLabelStyle>,
         filters: Vec<Filter>,
     }
 
@@ -638,6 +671,7 @@ pub mod strict {
                 unified_imbalance: strict.unified_imbalance,
                 split_style: strict.split_style,
                 channel_mode: strict.channel_mode,
+                pair_label_style: strict.pair_label_style,
                 filters: strict.filters,
             }
         }
@@ -786,6 +820,19 @@ mod tests {
     fn channel_mode_parses_from_toml() {
         let config: ConfigFile = toml::from_str("channel_mode = true").unwrap();
         assert!(config.channel_mode);
+    }
+
+    #[test]
+    fn pair_label_style_parses_from_toml() {
+        let config: ConfigFile =
+            toml::from_str("pair_label_style = \"short\"").unwrap();
+        assert_eq!(config.pair_label_style, Some(PairLabelStyle::Short));
+    }
+
+    #[test]
+    fn pair_label_style_defaults_to_verbose() {
+        let config = Config::from_toml_str("");
+        assert_eq!(config.pair_label_style, PairLabelStyle::Verbose);
     }
 
     #[test]

@@ -23,60 +23,97 @@ pub enum ChannelGroup {
     Single(usize),
 }
 
-/// Known left/right channel name pairs, per `enum spa_audio_channel`.
-/// `AUX*`/`UNKNOWN`/`NA`/`MONO` are deliberately absent - nothing in the
-/// protocol says any of those are paired with anything, so they always
-/// come out as `ChannelGroup::Single`.
-const LR_PAIRS: &[(u32, u32)] = &[
+/// Known left/right channel name pairs, per `enum spa_audio_channel`, each
+/// with a short, human-meaningful group name for labeling a radiating pair
+/// row (see `pair_group_name`). `AUX*`/`UNKNOWN`/`NA`/`MONO` are
+/// deliberately absent - nothing in the protocol says any of those are
+/// paired with anything, so they always come out as `ChannelGroup::Single`.
+///
+/// Group names are chosen to read sensibly on their own (using the
+/// standard 5.1/7.1/Atmos-adjacent terms for each position: Front, Side,
+/// Rear, Front-of-Center, Top-Front, Top-Rear, Rear-of-Center,
+/// Front-Wide, Front-High, Top-Side, Stereo-LFE, Back-Center) *and* to
+/// never collide with a real single-channel name from `channel_name` -
+/// several of the natural-looking abbreviations (`FC`, `RC`, `BC`, `LFE`)
+/// are already taken by actual channels, so those five pairs use a
+/// distinguishable variant instead (`FoC`, `RoC`, `BoC`, `SLF`).
+const LR_PAIRS: &[(u32, u32, &str)] = &[
     (
         libspa_sys::SPA_AUDIO_CHANNEL_FL,
         libspa_sys::SPA_AUDIO_CHANNEL_FR,
+        "F",
     ),
     (
         libspa_sys::SPA_AUDIO_CHANNEL_SL,
         libspa_sys::SPA_AUDIO_CHANNEL_SR,
+        "S",
     ),
     (
         libspa_sys::SPA_AUDIO_CHANNEL_RL,
         libspa_sys::SPA_AUDIO_CHANNEL_RR,
+        "R",
     ),
     (
         libspa_sys::SPA_AUDIO_CHANNEL_FLC,
         libspa_sys::SPA_AUDIO_CHANNEL_FRC,
+        "FoC",
     ),
     (
         libspa_sys::SPA_AUDIO_CHANNEL_TFL,
         libspa_sys::SPA_AUDIO_CHANNEL_TFR,
+        "TF",
     ),
     (
         libspa_sys::SPA_AUDIO_CHANNEL_TRL,
         libspa_sys::SPA_AUDIO_CHANNEL_TRR,
+        "TR",
     ),
     (
         libspa_sys::SPA_AUDIO_CHANNEL_RLC,
         libspa_sys::SPA_AUDIO_CHANNEL_RRC,
+        "RoC",
     ),
     (
         libspa_sys::SPA_AUDIO_CHANNEL_FLW,
         libspa_sys::SPA_AUDIO_CHANNEL_FRW,
+        "FW",
     ),
     (
         libspa_sys::SPA_AUDIO_CHANNEL_FLH,
         libspa_sys::SPA_AUDIO_CHANNEL_FRH,
+        "FH",
     ),
     (
         libspa_sys::SPA_AUDIO_CHANNEL_TSL,
         libspa_sys::SPA_AUDIO_CHANNEL_TSR,
+        "TS",
     ),
     (
         libspa_sys::SPA_AUDIO_CHANNEL_LLFE,
         libspa_sys::SPA_AUDIO_CHANNEL_RLFE,
+        "SLF",
     ),
     (
         libspa_sys::SPA_AUDIO_CHANNEL_BLC,
         libspa_sys::SPA_AUDIO_CHANNEL_BRC,
+        "BoC",
     ),
 ];
+
+/// The longest string any `LR_PAIRS` group name can be - lets callers
+/// size a fixed label column without hand-tracking the table's contents.
+pub const MAX_GROUP_NAME_WIDTH: usize = 3;
+
+/// The group name for a known left/right pair (see `LR_PAIRS`) - e.g.
+/// `"F"` for the FL/FR pair, `"S"` for SL/SR. `None` if `left`/`right`
+/// don't form one of the pairs `group_channels` recognizes (shouldn't
+/// happen for a `ChannelGroup::Pair` it actually produced, but this
+/// stays a plain lookup rather than assuming that).
+pub fn pair_group_name(left: u32, right: u32) -> Option<&'static str> {
+    LR_PAIRS
+        .iter()
+        .find_map(|&(l, r, name)| (l == left && r == right).then_some(name))
+}
 
 /// A short, human-readable name for a single `enum spa_audio_channel`
 /// value, for labeling individual channel rows in Channel mode display.
@@ -135,7 +172,7 @@ pub fn channel_name(position: u32) -> String {
 }
 
 fn lr_partner(channel: u32) -> Option<(u32, bool)> {
-    LR_PAIRS.iter().find_map(|&(l, r)| {
+    LR_PAIRS.iter().find_map(|&(l, r, _)| {
         if channel == l {
             Some((r, true))
         } else if channel == r {
@@ -308,5 +345,57 @@ mod tests {
     fn channel_name_falls_back_for_unknown_values() {
         assert_eq!(channel_name(libspa_sys::SPA_AUDIO_CHANNEL_UNKNOWN), "?");
         assert_eq!(channel_name(libspa_sys::SPA_AUDIO_CHANNEL_NA), "?");
+    }
+
+    #[test]
+    fn pair_group_name_covers_every_known_pair() {
+        // Every LR_PAIRS entry must resolve to a name, and that name
+        // must fit MAX_GROUP_NAME_WIDTH - callers size a fixed column
+        // from that constant, not by re-deriving the widest entry.
+        for &(l, r, expected) in LR_PAIRS {
+            let name = pair_group_name(l, r)
+                .unwrap_or_else(|| panic!("no group name for ({l}, {r})"));
+            assert_eq!(name, expected);
+            assert!(
+                name.len() <= MAX_GROUP_NAME_WIDTH,
+                "{name:?} exceeds MAX_GROUP_NAME_WIDTH"
+            );
+        }
+    }
+
+    #[test]
+    fn pair_group_name_none_for_a_non_pair() {
+        assert_eq!(pair_group_name(AUX0, AUX1), None);
+    }
+
+    #[test]
+    fn pair_group_names_never_collide_with_a_real_channel_name() {
+        // FLC/FRC, RLC/RRC, BLC/BRC, and LLFE/RLFE all have natural-
+        // looking abbreviations ("FC", "RC", "BC", "LFE") that are
+        // already real, distinct single-channel names - a pair row
+        // showing one of those would be indistinguishable from an
+        // actual FC/RC/BC/LFE row in the same node.
+        let real_channel_names = [
+            channel_name(FC),
+            channel_name(libspa_sys::SPA_AUDIO_CHANNEL_RC),
+            channel_name(libspa_sys::SPA_AUDIO_CHANNEL_BC),
+            channel_name(LFE),
+        ];
+        for &(_, _, group_name) in LR_PAIRS {
+            assert!(
+                !real_channel_names.contains(&group_name.to_string()),
+                "group name {group_name:?} collides with a real channel name"
+            );
+        }
+    }
+
+    #[test]
+    fn pair_group_names_are_all_distinct() {
+        let mut names: Vec<&str> =
+            LR_PAIRS.iter().map(|&(_, _, name)| name).collect();
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), count, "duplicate group name in LR_PAIRS");
     }
 }
