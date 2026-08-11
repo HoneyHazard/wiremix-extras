@@ -75,6 +75,18 @@ pub struct Config {
     /// spells out that it's a pair ("F L/R"); "short" is just the group
     /// name ("F").
     pub pair_label_style: PairLabelStyle,
+    /// Percentage of a bar/meter row's combined volume+meter content width
+    /// given to the meter side once `peaks` is on (the volume side gets
+    /// the rest) - applies uniformly everywhere a meter is drawn: the
+    /// classic single-row path and every row of a `Stacked`/`Radiating`
+    /// block alike, since they all derive their split from this same
+    /// setting.
+    pub meter_width_percent: f32,
+    /// Blank columns reserved at the right edge of every bar/meter row,
+    /// classic or split, whether or not `peaks` is on. Defaults to 0 -
+    /// volume/meter content uses the full available width instead of
+    /// leaving an unconfigurable margin behind.
+    pub right_margin: u16,
     pub filters: Vec<MatchCondition>,
 }
 
@@ -129,6 +141,10 @@ struct ConfigFile {
     channel_mode: bool,
     #[serde(default = "default_pair_label_style")]
     pair_label_style: Option<PairLabelStyle>,
+    #[serde(default = "default_meter_width_percent")]
+    meter_width_percent: Option<f32>,
+    #[serde(default = "default_right_margin")]
+    right_margin: u16,
     #[serde(default = "Filter::defaults", deserialize_with = "Filter::merge")]
     filters: Vec<Filter>,
 }
@@ -408,6 +424,14 @@ fn default_pair_label_style() -> Option<PairLabelStyle> {
     Some(PairLabelStyle::default())
 }
 
+fn default_meter_width_percent() -> Option<f32> {
+    Some(50.0)
+}
+
+fn default_right_margin() -> u16 {
+    0
+}
+
 impl ConfigFile {
     /// Override configuration with command-line arguments.
     pub fn apply_opt(&mut self, opt: &Opt) {
@@ -526,6 +550,16 @@ impl TryFrom<ConfigFile> for Config {
             }
         }
 
+        if let Some(meter_width_percent) = config_file.meter_width_percent {
+            if !(1.0..=99.0).contains(&meter_width_percent) {
+                anyhow::bail!(
+                    "meter_width_percent {meter_width_percent} must be \
+                     between 1 and 99 - to hide the meter entirely, use \
+                     peaks = \"off\" instead"
+                );
+            }
+        }
+
         if config_file.tabs.is_empty() {
             anyhow::bail!("tabs must be non-empty");
         }
@@ -565,6 +599,10 @@ impl TryFrom<ConfigFile> for Config {
             split_style: config_file.split_style.unwrap_or_default(),
             channel_mode: config_file.channel_mode,
             pair_label_style: config_file.pair_label_style.unwrap_or_default(),
+            meter_width_percent: config_file
+                .meter_width_percent
+                .unwrap_or_default(),
+            right_margin: config_file.right_margin,
             filters,
         })
     }
@@ -655,6 +693,8 @@ pub mod strict {
         split_style: Option<SplitStyle>,
         channel_mode: bool,
         pair_label_style: Option<PairLabelStyle>,
+        meter_width_percent: Option<f32>,
+        right_margin: u16,
         filters: Vec<Filter>,
     }
 
@@ -681,6 +721,8 @@ pub mod strict {
                 split_style: strict.split_style,
                 channel_mode: strict.channel_mode,
                 pair_label_style: strict.pair_label_style,
+                meter_width_percent: strict.meter_width_percent,
+                right_margin: strict.right_margin,
                 filters: strict.filters,
             }
         }
@@ -949,6 +991,30 @@ mod tests {
         "#;
         let config_file: ConfigFile = toml::from_str(config).unwrap();
         assert!(Config::try_from(config_file).is_err());
+    }
+
+    #[test]
+    fn meter_width_percent_out_of_range_is_error() {
+        let too_low: ConfigFile =
+            toml::from_str("meter_width_percent = 0.0").unwrap();
+        assert!(Config::try_from(too_low).is_err());
+
+        let too_high: ConfigFile =
+            toml::from_str("meter_width_percent = 100.0").unwrap();
+        assert!(Config::try_from(too_high).is_err());
+    }
+
+    #[test]
+    fn meter_width_percent_and_right_margin_default_and_configure() {
+        let default = Config::from_toml_str("");
+        assert_eq!(default.meter_width_percent, 50.0);
+        assert_eq!(default.right_margin, 0);
+
+        let configured = Config::from_toml_str(
+            "meter_width_percent = 30.0\nright_margin = 4",
+        );
+        assert_eq!(configured.meter_width_percent, 30.0);
+        assert_eq!(configured.right_margin, 4);
     }
 
     #[test]

@@ -1011,6 +1011,8 @@ mod tests {
             split_style: Default::default(),
             channel_mode: Default::default(),
             pair_label_style: Default::default(),
+            meter_width_percent: 50.0,
+            right_margin: Default::default(),
             filters: Default::default(),
         };
 
@@ -1117,6 +1119,8 @@ mod tests {
             split_style: Default::default(),
             channel_mode: Default::default(),
             pair_label_style: Default::default(),
+            meter_width_percent: 50.0,
+            right_margin: Default::default(),
             filters: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);

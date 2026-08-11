@@ -154,6 +154,19 @@ const CYCLE_INTERVAL_SECONDS: f32 = 1.5;
 /// gives that reclaimed width back to the volume/meter areas instead.
 const MIDSCREEN_GAP: u16 = 2;
 
+/// `(volume_weight, meter_weight)` `Constraint::Fill` weights for a
+/// bar/meter row's volume/meter split, derived from
+/// `config.meter_width_percent` - used identically everywhere a meter is
+/// drawn (the classic single-row path and every `Stacked`/`Radiating`
+/// row), so they all land on the same meter start column for a given
+/// config, the same way sharing `MIDSCREEN_GAP` already keeps the gap
+/// itself consistent. `meter_width_percent` is validated to 1..=99 at
+/// config-load time, so both weights are always positive.
+fn meter_split_weights(config: &Config) -> (u16, u16) {
+    let meter = config.meter_width_percent.round() as u16;
+    (100 - meter, meter)
+}
+
 /// Which channel `unified_imbalance = "cycle"` should show right now for
 /// an imbalanced node in Unified display, if it applies at all. `None`
 /// whenever cycling isn't active for this node (display isn't actually
@@ -452,13 +465,14 @@ impl<'a> NodeWidget<'a> {
         if config.peaks == Peaks::Off {
             row_area.width
         } else {
+            let (volume_weight, meter_weight) = meter_split_weights(config);
             Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
-                    Constraint::Fill(4),               // row_area
+                    Constraint::Fill(volume_weight),   // row_area
                     Constraint::Length(MIDSCREEN_GAP), // _padding
-                    Constraint::Fill(4),               // meter_area
-                    Constraint::Fill(1),               // _padding
+                    Constraint::Fill(meter_weight),    // meter_area
+                    Constraint::Length(config.right_margin), // _padding
                 ])
                 .split(row_area)[0]
                 .width
@@ -556,8 +570,8 @@ impl StatefulWidget for NodeWidget<'_> {
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
-                    Constraint::Fill(9), // volume_area
-                    Constraint::Fill(1), // _padding
+                    Constraint::Fill(1),                          // volume_area
+                    Constraint::Length(self.config.right_margin), // _padding
                 ])
                 .split(bar_area);
             let volume_area = layout[0];
@@ -572,13 +586,15 @@ impl StatefulWidget for NodeWidget<'_> {
                 mouse_areas,
             );
         } else {
+            let (volume_weight, meter_weight) =
+                meter_split_weights(self.config);
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
-                    Constraint::Fill(4),               // volume_area
+                    Constraint::Fill(volume_weight),   // volume_area
                     Constraint::Length(MIDSCREEN_GAP), // _padding
-                    Constraint::Fill(4),               // meter_area
-                    Constraint::Fill(1),               // _padding
+                    Constraint::Fill(meter_weight),    // meter_area
+                    Constraint::Length(self.config.right_margin), // _padding
                 ])
                 .split(bar_area);
             let volume_area = layout[0];
@@ -1250,13 +1266,15 @@ impl StatefulWidget for ChannelRowWidget<'_> {
         let (row_area, meter_area) = if self.config.peaks == Peaks::Off {
             (area, None)
         } else {
+            let (volume_weight, meter_weight) =
+                meter_split_weights(self.config);
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
-                    Constraint::Fill(4),               // row_area
+                    Constraint::Fill(volume_weight),   // row_area
                     Constraint::Length(MIDSCREEN_GAP), // _padding
-                    Constraint::Fill(4),               // meter_area
-                    Constraint::Fill(1),               // _padding
+                    Constraint::Fill(meter_weight),    // meter_area
+                    Constraint::Length(self.config.right_margin), // _padding
                 ])
                 .split(area);
             (layout[0], Some(layout[2]))
@@ -1515,13 +1533,15 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         let (row_area, meter_area) = if self.config.peaks == Peaks::Off {
             (area, None)
         } else {
+            let (volume_weight, meter_weight) =
+                meter_split_weights(self.config);
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
-                    Constraint::Fill(4),               // row_area
+                    Constraint::Fill(volume_weight),   // row_area
                     Constraint::Length(MIDSCREEN_GAP), // _padding
-                    Constraint::Fill(4),               // meter_area
-                    Constraint::Fill(1),               // _padding
+                    Constraint::Fill(meter_weight),    // meter_area
+                    Constraint::Length(self.config.right_margin), // _padding
                 ])
                 .split(area);
             (layout[0], Some(layout[2]))
@@ -2952,6 +2972,112 @@ mod tests {
              bar at the same column a Stacked block's radiating row \
              does - bars line up across every node in the list, not \
              just within one node's own split block"
+        );
+    }
+
+    #[test]
+    fn meter_width_percent_moves_the_meter_column_for_classic_and_split_rows_alike(
+    ) {
+        // A narrower meter_width_percent gives more room to the volume
+        // side, pushing the meter's start column further right - for
+        // both the classic Unified path and a Stacked block's row alike,
+        // since both derive their split from the same config setting.
+        let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
+        let aux0 = libspa_sys::SPA_AUDIO_CHANNEL_AUX0;
+        let aux1 = libspa_sys::SPA_AUDIO_CHANNEL_AUX1;
+
+        let default_config = config::Config::from_toml_str(
+            "channel_display = \"always\"\npeaks = \"auto\"\n\
+             char_set = \"compat\"",
+        );
+        let narrow_meter_config = config::Config::from_toml_str(
+            "channel_display = \"always\"\npeaks = \"auto\"\n\
+             char_set = \"compat\"\nmeter_width_percent = 25.0",
+        );
+        let meter_glyph = default_config.char_set.meter_left_active.as_str();
+        let meter_start = |lines: &[String]| -> usize {
+            lines
+                .iter()
+                .find_map(|line| line.find(meter_glyph))
+                .expect("a meter somewhere in the rendered node")
+        };
+
+        let unified_node = test_node(Some(vec![mono]), vec![1.0]);
+        let stacked_node = test_node(Some(vec![aux0, aux1]), vec![0.5, 0.5]);
+
+        let default_unified_start = meter_start(&render_node_lines(
+            &default_config,
+            &unified_node,
+            false,
+            false,
+            None,
+        ));
+        let narrow_unified_start = meter_start(&render_node_lines(
+            &narrow_meter_config,
+            &unified_node,
+            false,
+            false,
+            None,
+        ));
+        assert!(
+            narrow_unified_start > default_unified_start,
+            "a narrower meter_width_percent should push the classic \
+             path's meter further right"
+        );
+
+        let default_stacked_start = meter_start(&render_node_lines(
+            &default_config,
+            &stacked_node,
+            false,
+            false,
+            None,
+        ));
+        let narrow_stacked_start = meter_start(&render_node_lines(
+            &narrow_meter_config,
+            &stacked_node,
+            false,
+            false,
+            None,
+        ));
+        assert!(
+            narrow_stacked_start > default_stacked_start,
+            "a narrower meter_width_percent should push a Stacked row's \
+             meter further right too"
+        );
+    }
+
+    #[test]
+    fn right_margin_reclaims_or_reserves_trailing_columns() {
+        // right_margin = 0 (the default) lets content reach further
+        // right than a larger right_margin does - checked via the last
+        // non-space column used by a fully-filled classic bar+meter row.
+        let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
+        let node = test_node(Some(vec![mono]), vec![1.0]);
+
+        let last_used_column = |lines: &[String]| -> usize {
+            lines
+                .iter()
+                .map(|line| line.trim_end().chars().count())
+                .max()
+                .expect("at least one rendered line")
+        };
+
+        let no_margin_config =
+            config::Config::from_toml_str("peaks = \"auto\"\nright_margin = 0");
+        let wide_margin_config = config::Config::from_toml_str(
+            "peaks = \"auto\"\nright_margin = 10",
+        );
+
+        let no_margin_lines =
+            render_node_lines(&no_margin_config, &node, false, false, None);
+        let wide_margin_lines =
+            render_node_lines(&wide_margin_config, &node, false, false, None);
+
+        assert!(
+            last_used_column(&no_margin_lines)
+                > last_used_column(&wide_margin_lines),
+            "right_margin = 0 should let content reach further right \
+             than right_margin = 10 does"
         );
     }
 }

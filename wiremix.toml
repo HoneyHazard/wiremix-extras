@@ -96,6 +96,18 @@ split_style = "radiating"
 # "short" - just the group name, e.g. "F", "R".
 pair_label_style = "verbose"
 
+# Percentage of a bar/meter row's combined volume+meter content width
+# given to the meter side once peaks is not "off" (the volume side gets
+# the rest). Applies everywhere a meter is drawn - the classic single-row
+# path and every row of a split (radiating/stacked) block alike. Must be
+# between 1 and 99; to hide the meter entirely, use peaks = "off" instead.
+meter_width_percent = 50.0
+
+# Blank columns reserved at the right edge of every bar/meter row,
+# classic or split, whether or not peaks is on. 0 (today's default) lets
+# volume/meter content use the full available row width.
+right_margin = 0
+
 # Whether volume keys (h/l, Left/Right, 0-9, etc.) adjust every channel
 # of the selected item together (false, linked/ganged - today's default)
 # or only the individually-cursored channel (true, "Channel mode").
