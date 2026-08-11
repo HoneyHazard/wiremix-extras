@@ -44,6 +44,60 @@ pub fn render_stereo(
     peaks: Option<(f32, f32)>,
     config: &Config,
 ) {
+    render_stereo_with_chars(
+        meter_area,
+        buf,
+        peaks,
+        config,
+        &config.char_set.meter_left_active,
+        &config.char_set.meter_left_overload,
+        &config.char_set.meter_left_inactive,
+        &config.char_set.meter_right_active,
+        &config.char_set.meter_right_overload,
+        &config.char_set.meter_right_inactive,
+    );
+}
+
+/// Same as [`render_stereo`], but for a detected pair's own row within a
+/// split display (`Stacked`, when `split_style = "radiating"`) - uses
+/// `meter_channel_*` for both sides instead of `meter_left_*`/
+/// `meter_right_*`, so a paired row's gauge reads as visually
+/// consistent with its unpaired siblings in the same block (both use
+/// the "channel" glyph), rather than looking like an unrelated
+/// whole-node meter that happens to share the block.
+pub fn render_stereo_channel(
+    meter_area: Rect,
+    buf: &mut Buffer,
+    peaks: Option<(f32, f32)>,
+    config: &Config,
+) {
+    render_stereo_with_chars(
+        meter_area,
+        buf,
+        peaks,
+        config,
+        &config.char_set.meter_channel_active,
+        &config.char_set.meter_channel_overload,
+        &config.char_set.meter_channel_inactive,
+        &config.char_set.meter_channel_active,
+        &config.char_set.meter_channel_overload,
+        &config.char_set.meter_channel_inactive,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_stereo_with_chars(
+    meter_area: Rect,
+    buf: &mut Buffer,
+    peaks: Option<(f32, f32)>,
+    config: &Config,
+    left_active: &str,
+    left_overload: &str,
+    left_inactive: &str,
+    right_active: &str,
+    right_overload: &str,
+    right_inactive: &str,
+) {
     let layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -64,15 +118,15 @@ pub fn render_stereo(
         render_peak(left_peak, area);
     Line::from(vec![
         Span::styled(
-            config.char_set.meter_left_inactive.repeat(inactive_peak),
+            left_inactive.repeat(inactive_peak),
             config.theme.meter_inactive,
         ),
         Span::styled(
-            config.char_set.meter_left_overload.repeat(overload_peak),
+            left_overload.repeat(overload_peak),
             config.theme.meter_overload,
         ),
         Span::styled(
-            config.char_set.meter_left_active.repeat(active_peak),
+            left_active.repeat(active_peak),
             config.theme.meter_active,
         ),
     ])
@@ -84,15 +138,15 @@ pub fn render_stereo(
         render_peak(right_peak, area);
     Line::from(vec![
         Span::styled(
-            config.char_set.meter_right_active.repeat(active_peak),
+            right_active.repeat(active_peak),
             config.theme.meter_active,
         ),
         Span::styled(
-            config.char_set.meter_right_overload.repeat(overload_peak),
+            right_overload.repeat(overload_peak),
             config.theme.meter_overload,
         ),
         Span::styled(
-            config.char_set.meter_right_inactive.repeat(inactive_peak),
+            right_inactive.repeat(inactive_peak),
             config.theme.meter_inactive,
         ),
     ])

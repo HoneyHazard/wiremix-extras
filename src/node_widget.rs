@@ -1725,7 +1725,7 @@ impl RadiatingRowWidget<'_> {
                         self.config,
                     );
                 } else {
-                    meter::render_stereo(
+                    meter::render_stereo_channel(
                         meter_area,
                         buf,
                         left.zip(right),
@@ -2699,6 +2699,53 @@ mod tests {
         assert!(
             lines[1].contains(':'),
             "a forced-mono pair row still needs some kind of gauge"
+        );
+    }
+
+    #[test]
+    fn paired_and_unpaired_rows_share_the_same_monitor_glyph() {
+        // A pair row's own monitor gauge must read as visually
+        // consistent with its unpaired siblings in the same block - both
+        // use meter_channel_*, not meter_left/meter_right (the
+        // whole-node stereo meter's own glyph, which happens to be a
+        // completely different character in every built-in char_set).
+        use crate::atomic_f32::AtomicF32;
+        use std::sync::Arc;
+
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        let mut node = test_node(Some(vec![fl, fr, fc]), vec![1.0, 1.0, 1.0]);
+        node.peaks = Some(Arc::from([
+            AtomicF32::new(1.0),
+            AtomicF32::new(1.0),
+            AtomicF32::new(1.0),
+        ]));
+        let config = config::Config::from_toml_str(
+            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+             char_set = \"extracompat\"\npeaks = \"auto\"",
+        );
+
+        let lines = render_node_lines(&config, &node, false, false, None);
+        assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
+
+        // extracompat's meter_channel_active is ':', distinct from
+        // meter_left/right_active's '#' - neither row should ever show
+        // '#'.
+        assert!(
+            !lines[1].contains('#'),
+            "a pair row's monitor gauge must not use the whole-node \
+             meter_left/right glyph"
+        );
+        assert!(
+            lines[1].contains(':'),
+            "a pair row's monitor gauge should show its own peak using \
+             meter_channel_active"
+        );
+        assert!(
+            lines[2].contains(':'),
+            "the unpaired row's monitor gauge should use the same \
+             meter_channel_active glyph"
         );
     }
 
