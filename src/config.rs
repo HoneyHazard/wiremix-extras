@@ -252,13 +252,6 @@ pub struct CharSet {
     pub list_more: String,
     pub volume_empty: String,
     pub volume_filled: String,
-    /// A single channel's own volume bar within a split display (Channel
-    /// mode, or any other multi-row layout) - deliberately separate from
-    /// `volume_empty`/`volume_filled` so a disjoint, thinner glyph can be
-    /// used there, distinguishing a per-channel bar from the whole-node
-    /// bar at a glance (mirrors `meter_channel_*` on the monitor side).
-    pub volume_channel_empty: String,
-    pub volume_channel_filled: String,
     pub meter_left_inactive: String,
     pub meter_left_active: String,
     pub meter_left_overload: String,

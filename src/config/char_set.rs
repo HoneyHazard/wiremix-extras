@@ -23,8 +23,6 @@ pub struct CharSetOverlay {
     list_more: Option<String>,
     volume_empty: Option<String>,
     volume_filled: Option<String>,
-    volume_channel_empty: Option<String>,
-    volume_channel_filled: Option<String>,
     meter_left_inactive: Option<String>,
     meter_left_active: Option<String>,
     meter_left_overload: Option<String>,
@@ -110,8 +108,6 @@ impl TryFrom<CharSetOverlay> for CharSet {
         validate_and_set!(list_more, 0);
         validate_and_set!(volume_empty, 1);
         validate_and_set!(volume_filled, 1);
-        validate_and_set!(volume_channel_empty, 1);
-        validate_and_set!(volume_channel_filled, 1);
         validate_and_set!(meter_left_inactive, 1);
         validate_and_set!(meter_left_active, 1);
         validate_and_set!(meter_left_overload, 1);
@@ -155,12 +151,6 @@ impl Default for CharSet {
             list_more: String::from("•••"),
             volume_empty: String::from("╌"),
             volume_filled: String::from("━"),
-            // Small, disjoint squares rather than volume_empty/filled's
-            // solid line - a channel row's own bar reads as visually
-            // distinct from the whole-node bar, not just a shorter copy
-            // of it.
-            volume_channel_empty: String::from("▫"),
-            volume_channel_filled: String::from("▪"),
             meter_left_inactive: String::from("▮"),
             meter_left_active: String::from("▮"),
             meter_left_overload: String::from("▮"),
@@ -209,11 +199,6 @@ impl CharSet {
             list_more: String::from("•••"),
             volume_empty: String::from("─"),
             volume_filled: String::from("━"),
-            // Dashed rather than volume_empty/filled's solid rules - a
-            // channel row's own bar reads as visually distinct from the
-            // whole-node bar, not just a shorter copy of it.
-            volume_channel_empty: String::from("┄"),
-            volume_channel_filled: String::from("┅"),
             meter_left_inactive: String::from("┃"),
             meter_left_active: String::from("┃"),
             meter_left_overload: String::from("┃"),
@@ -255,11 +240,6 @@ impl CharSet {
             list_more: String::from("~~~"),
             volume_empty: String::from("-"),
             volume_filled: String::from("="),
-            // Distinct ASCII from volume_empty/filled's "-" / "=" - a
-            // channel row's own bar reads as visually distinct from the
-            // whole-node bar, not just a shorter copy of it.
-            volume_channel_empty: String::from("o"),
-            volume_channel_filled: String::from("O"),
             meter_left_inactive: String::from("="),
             meter_left_active: String::from("#"),
             meter_left_overload: String::from("!"),
@@ -463,18 +443,19 @@ mod tests {
     }
 
     #[test]
-    fn channel_bar_glyphs_never_collide_with_whole_node_glyphs() {
-        // A channel row's own volume bar and monitor gauge must each
-        // read as visually distinct from the whole-node volume bar -
+    fn channel_meter_glyphs_never_collide_with_volume_glyphs() {
+        // A channel row's own monitor gauge (meter_channel_*) must read
+        // as visually distinct from the volume bar it sits next to -
         // caught a real bug once already (compat/extracompat's
         // meter_channel_* originally reused volume_empty's exact
         // character, making a channel's monitor gauge indistinguishable
-        // from an empty volume bar).
+        // from an empty volume bar). Volume bars themselves are
+        // deliberately *not* checked here - a channel row's volume bar
+        // intentionally reuses volume_empty/volume_filled, same as the
+        // whole-node bar.
         for (name, char_set) in CharSet::defaults() {
             let whole_node = [&char_set.volume_empty, &char_set.volume_filled];
             let channel_specific = [
-                &char_set.volume_channel_empty,
-                &char_set.volume_channel_filled,
                 &char_set.meter_channel_inactive,
                 &char_set.meter_channel_active,
                 &char_set.meter_channel_overload,

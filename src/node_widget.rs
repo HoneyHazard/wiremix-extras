@@ -1285,11 +1285,11 @@ impl StatefulWidget for ChannelRowWidget<'_> {
         let count = ((volume.clamp(0.0, max_volume) / max_volume)
             * volume_bar.width as f32)
             .round() as usize;
-        let filled = self.config.char_set.volume_channel_filled.repeat(count);
+        let filled = self.config.char_set.volume_filled.repeat(count);
         let blank = self
             .config
             .char_set
-            .volume_channel_empty
+            .volume_empty
             .repeat((volume_bar.width as usize).saturating_sub(count));
         Line::from(vec![
             Span::styled(filled, self.config.theme.volume_filled),
@@ -1549,15 +1549,12 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
             Span::styled(
                 self.config
                     .char_set
-                    .volume_channel_empty
+                    .volume_empty
                     .repeat((bar_l.width as usize).saturating_sub(left_count)),
                 self.config.theme.volume_empty,
             ),
             Span::styled(
-                self.config
-                    .char_set
-                    .volume_channel_filled
-                    .repeat(left_count),
+                self.config.char_set.volume_filled.repeat(left_count),
                 self.config.theme.volume_filled,
             ),
         ])
@@ -1633,16 +1630,13 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
             .round() as usize;
         Line::from(vec![
             Span::styled(
-                self.config
-                    .char_set
-                    .volume_channel_filled
-                    .repeat(right_count),
+                self.config.char_set.volume_filled.repeat(right_count),
                 self.config.theme.volume_filled,
             ),
             Span::styled(
                 self.config
                     .char_set
-                    .volume_channel_empty
+                    .volume_empty
                     .repeat((bar_r.width as usize).saturating_sub(right_count)),
                 self.config.theme.volume_empty,
             ),
@@ -2614,9 +2608,7 @@ mod tests {
         let lines = render_node_lines(&config, &node, false, false, None);
         assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
 
-        // Stacked-block rows (RadiatingRowWidget) use volume_channel_*,
-        // not the whole-node volume_filled/empty.
-        let filled = config.char_set.volume_channel_filled.as_str();
+        let filled = config.char_set.volume_filled.as_str();
         let pair_row_filled = lines[1].matches(filled).count();
         let single_row_filled = lines[2].matches(filled).count();
         assert!(pair_row_filled > 0);
@@ -2646,7 +2638,7 @@ mod tests {
         let lines = render_node_lines(&config, &node, false, false, None);
         assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
 
-        let filled = config.char_set.volume_channel_filled.as_str();
+        let filled = config.char_set.volume_filled.as_str();
         let pair_row_bar_start =
             lines[1].find(filled).expect("FL's bar is fully filled");
         let single_row_bar_start =
@@ -2734,19 +2726,13 @@ mod tests {
             "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
              peaks = \"off\"\nmax_volume_percent = 100.0",
         );
-        // Unified and the classic single-pair Radiating fast path use
-        // volume_filled; a Stacked block's rows (RadiatingRowWidget) use
-        // the distinct volume_channel_filled instead (see
-        // channel_bar_glyphs_never_collide_with_whole_node_glyphs) - the
-        // *column* they start at is what must match, not the glyph.
-        let bar_start = |lines: &[String], filled: &str| -> usize {
+        let filled = config.char_set.volume_filled.as_str();
+        let bar_start = |lines: &[String]| -> usize {
             lines
                 .iter()
                 .find_map(|line| line.find(filled))
                 .expect("a fully-filled bar somewhere in the rendered node")
         };
-        let whole_node_filled = config.char_set.volume_filled.as_str();
-        let channel_filled = config.char_set.volume_channel_filled.as_str();
 
         let unified_node = test_node(Some(vec![mono]), vec![1.0]);
         let unified_lines =
@@ -2760,9 +2746,9 @@ mod tests {
         let stacked_lines =
             render_node_lines(&config, &stacked_node, false, false, None);
 
-        let unified_start = bar_start(&unified_lines, whole_node_filled);
-        let radiating_start = bar_start(&radiating_lines, whole_node_filled);
-        let stacked_start = bar_start(&stacked_lines, channel_filled);
+        let unified_start = bar_start(&unified_lines);
+        let radiating_start = bar_start(&radiating_lines);
+        let stacked_start = bar_start(&stacked_lines);
 
         assert_eq!(
             unified_start, radiating_start,
