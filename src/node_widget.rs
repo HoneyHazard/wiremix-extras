@@ -765,7 +765,7 @@ fn single_pair(node: &view::Node) -> Option<(usize, usize)> {
 
 /// `RadiatingRowWidget`'s leading label. For a detected pair
 /// (`right_index: Some`) this is the pair's `channel_pairing::
-/// pair_group_name` - "F" (`PairLabelStyle::Short`) or "F L/R"
+/// pair_group_name` - "F" (`PairLabelStyle::Short`) or "F L|R"
 /// (`PairLabelStyle::Verbose`) for the FL/FR pair, and so on - never the
 /// individual channel's own name, which would be indistinguishable from
 /// an actual single-channel row showing that exact channel. For an
@@ -799,7 +799,7 @@ fn radiating_row_label(
 
     match style {
         PairLabelStyle::Short => group.to_string(),
-        PairLabelStyle::Verbose => format!("{group} L/R"),
+        PairLabelStyle::Verbose => format!("{group} L|R"),
     }
 }
 
@@ -1360,7 +1360,7 @@ impl StatefulWidget for ChannelRowWidget<'_> {
 /// The column width for `RadiatingRowWidget`'s leading label - wide
 /// enough for the longest possible content regardless of which shows up:
 /// a `PairLabelStyle::Verbose` group label (`channel_pairing::
-/// MAX_GROUP_NAME_WIDTH` plus a 4-character `" L/R"` suffix), or an
+/// MAX_GROUP_NAME_WIDTH` plus a 4-character `" L|R"` suffix), or an
 /// unpaired channel's own `channel_name` (up to `"AUX63"`, 5 chars,
 /// comfortably under this).
 const RADIATING_LABEL_WIDTH: u16 =
@@ -2572,12 +2572,12 @@ mod tests {
         assert_eq!(lines.len(), 5); // header + 2 pair rows + 2 single rows
                                     // Pair rows are labeled with their group name, not either
                                     // individual channel's own name - "F"/"R" (default
-                                    // PairLabelStyle::Verbose spells it "F L/R"/"R L/R"), never
+                                    // PairLabelStyle::Verbose spells it "F L|R"/"R L|R"), never
                                     // "FL" or "RL" (which would be indistinguishable from a real
                                     // single-channel row showing that exact channel).
-        assert!(lines[1].contains("F L/R"));
+        assert!(lines[1].contains("F L|R"));
         assert!(lines[1].contains("100%"));
-        assert!(lines[2].contains("R L/R"));
+        assert!(lines[2].contains("R L|R"));
         assert!(lines[2].contains("100%"));
         assert!(lines[3].contains("FC"));
         assert!(lines[3].contains("100%"));
@@ -2659,7 +2659,7 @@ mod tests {
         let lines = render_node_lines(&config, &node, false, false, None);
 
         assert!(lines[1].contains('F'));
-        assert!(!lines[1].contains("L/R"));
+        assert!(!lines[1].contains("L|R"));
     }
 
     #[test]

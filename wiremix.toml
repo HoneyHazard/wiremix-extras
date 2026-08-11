@@ -91,8 +91,8 @@ split_style = "radiating"
 # ends up in the same node's split display (see split_style above) - a
 # lone pair takes the single-row fast path above and never needs a
 # label. How a radiating pair row's group label is formatted:
-# "verbose" - spells out that it's a pair, e.g. "F L/R" for the FL/FR
-#   pair, "R L/R" for RL/RR (today's default).
+# "verbose" - spells out that it's a pair, e.g. "F L|R" for the FL/FR
+#   pair, "R L|R" for RL/RR (today's default).
 # "short" - just the group name, e.g. "F", "R".
 pair_label_style = "verbose"
 
