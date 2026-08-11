@@ -33,9 +33,6 @@ pub struct CharSetOverlay {
     meter_center_left_active: Option<String>,
     meter_center_right_inactive: Option<String>,
     meter_center_right_active: Option<String>,
-    meter_channel_inactive: Option<String>,
-    meter_channel_active: Option<String>,
-    meter_channel_overload: Option<String>,
     dropdown_icon: Option<String>,
     dropdown_selector: Option<String>,
     dropdown_more: Option<String>,
@@ -118,9 +115,6 @@ impl TryFrom<CharSetOverlay> for CharSet {
         validate_and_set!(meter_center_left_active, 1);
         validate_and_set!(meter_center_right_inactive, 1);
         validate_and_set!(meter_center_right_active, 1);
-        validate_and_set!(meter_channel_inactive, 1);
-        validate_and_set!(meter_channel_active, 1);
-        validate_and_set!(meter_channel_overload, 1);
         validate_and_set!(dropdown_icon, 1);
         validate_and_set!(dropdown_selector, 1);
         validate_and_set!(dropdown_more, 0);
@@ -161,13 +155,6 @@ impl Default for CharSet {
             meter_center_left_active: String::from("▮"),
             meter_center_right_inactive: String::from("▮"),
             meter_center_right_active: String::from("▮"),
-            // A shorter, vertically-centered rectangle rather than
-            // meter_right's full-height "▮" - stacked channel-row meters
-            // then leave visible top/bottom gaps instead of forming one
-            // solid block when several sit directly above one another.
-            meter_channel_inactive: String::from("▬"),
-            meter_channel_active: String::from("▬"),
-            meter_channel_overload: String::from("▬"),
             dropdown_icon: String::from("▼"),
             dropdown_selector: String::from(">"),
             dropdown_more: String::from("•••"),
@@ -209,16 +196,6 @@ impl CharSet {
             meter_center_left_active: String::from("█"),
             meter_center_right_inactive: String::from("█"),
             meter_center_right_active: String::from("█"),
-            // A double-dashed rule, distinct from meter_right's "┃"
-            // *and* from volume_empty's plain "─" (an earlier version of
-            // this used "─" here too, which made a channel row's own
-            // monitor gauge visually indistinguishable from an empty
-            // volume bar) - reads as thinner than "┃" so stacked
-            // channel-row meters don't blend into each other, without
-            // being mistakable for a volume bar.
-            meter_channel_inactive: String::from("╌"),
-            meter_channel_active: String::from("╌"),
-            meter_channel_overload: String::from("╌"),
             dropdown_icon: String::from("▼"),
             dropdown_selector: String::from(">"),
             dropdown_more: String::from("•••"),
@@ -250,15 +227,6 @@ impl CharSet {
             meter_center_left_active: String::from("["),
             meter_center_right_inactive: String::from("]"),
             meter_center_right_active: String::from("]"),
-            // Distinct ASCII from meter_right's "=" / "#" / "!" *and*
-            // from volume_empty's "-" (an earlier version of this used
-            // "-" here too, which made a channel row's own monitor gauge
-            // visually indistinguishable from an empty volume bar) -
-            // still three distinct characters per state, since
-            // extracompat has no color to lean on.
-            meter_channel_inactive: String::from("."),
-            meter_channel_active: String::from(":"),
-            meter_channel_overload: String::from("^"),
             dropdown_icon: String::from("\\"),
             dropdown_selector: String::from(">"),
             dropdown_more: String::from("~~~"),
@@ -440,33 +408,5 @@ mod tests {
         unknown = "unknown"
         "#;
         assert!(toml::from_str::<CharSetOverlay>(config).is_err());
-    }
-
-    #[test]
-    fn channel_meter_glyphs_never_collide_with_volume_glyphs() {
-        // A channel row's own monitor gauge (meter_channel_*) must read
-        // as visually distinct from the volume bar it sits next to -
-        // caught a real bug once already (compat/extracompat's
-        // meter_channel_* originally reused volume_empty's exact
-        // character, making a channel's monitor gauge indistinguishable
-        // from an empty volume bar). Volume bars themselves are
-        // deliberately *not* checked here - a channel row's volume bar
-        // intentionally reuses volume_empty/volume_filled, same as the
-        // whole-node bar.
-        for (name, char_set) in CharSet::defaults() {
-            let whole_node = [&char_set.volume_empty, &char_set.volume_filled];
-            let channel_specific = [
-                &char_set.meter_channel_inactive,
-                &char_set.meter_channel_active,
-                &char_set.meter_channel_overload,
-            ];
-            for channel_char in channel_specific {
-                assert!(
-                    !whole_node.contains(&channel_char),
-                    "{name}: a channel-specific glyph {channel_char:?} \
-                     collides with a whole-node volume glyph"
-                );
-            }
-        }
     }
 }

@@ -262,16 +262,6 @@ pub struct CharSet {
     pub meter_center_left_active: String,
     pub meter_center_right_inactive: String,
     pub meter_center_right_active: String,
-    /// Per-channel meter (Channel mode/split rows, one gauge per channel
-    /// stacked in sequence) - deliberately separate from
-    /// `meter_right_*` so a thinner/shorter glyph can be used, keeping
-    /// several stacked channel meters from visually blending into one
-    /// solid block. Reuses `meter_center_right_*` for the "live"
-    /// indicator, since that's a single character, not a repeated run -
-    /// nothing there to blend.
-    pub meter_channel_inactive: String,
-    pub meter_channel_active: String,
-    pub meter_channel_overload: String,
     pub dropdown_icon: String,
     pub dropdown_selector: String,
     pub dropdown_more: String,

@@ -502,18 +502,6 @@ meter_center_left_inactive = "▮"
 meter_center_left_active = "▮"
 meter_center_right_inactive = "▮"
 meter_center_right_active = "▮"
-# A single channel's own meter within a split display (Channel mode, or any
-# other multi-row layout - see channel_display/split_style above). Separate
-# from meter_left/meter_right so it can use a shorter/thinner glyph -
-# several of these stacked directly above one another would otherwise read
-# as one solid blended bar instead of distinct per-channel gauges. Must not
-# match volume_empty/volume_filled either, or a channel's monitor gauge
-# becomes indistinguishable from its volume bar (a channel row's volume bar
-# intentionally reuses volume_empty/volume_filled, same as the whole-node
-# bar - only the monitor gauge gets a distinct glyph here).
-meter_channel_inactive = "▬"
-meter_channel_active = "▬"
-meter_channel_overload = "▬"
 # Dropdown marker next to the profiles in the Configuration tab
 dropdown_icon = "▼"
 # Indicates the selected item in a dropdown
@@ -615,9 +603,6 @@ meter_center_left_inactive = "█"
 meter_center_left_active = "█"
 meter_center_right_inactive = "█"
 meter_center_right_active = "█"
-meter_channel_inactive = "╌"
-meter_channel_active = "╌"
-meter_channel_overload = "╌"
 dropdown_icon = "▼"
 dropdown_selector = ">"
 dropdown_more = "•••"
@@ -646,9 +631,6 @@ meter_center_left_inactive = "["
 meter_center_left_active = "["
 meter_center_right_inactive = "]"
 meter_center_right_active = "]"
-meter_channel_inactive = "."
-meter_channel_active = ":"
-meter_channel_overload = "^"
 dropdown_icon = "\\"
 dropdown_selector = ">"
 dropdown_more = "~~~"

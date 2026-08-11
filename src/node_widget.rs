@@ -1351,7 +1351,7 @@ impl StatefulWidget for ChannelRowWidget<'_> {
                 .as_deref()
                 .and_then(|peaks| peaks.get(channel_index))
                 .map(|peak| peak.load());
-            meter::render_mono_channel(meter_area, buf, peak, self.config);
+            meter::render_mono(meter_area, buf, peak, self.config);
             self.node.peaks_dirty.store(false, Ordering::Relaxed);
         }
     }
@@ -1718,14 +1718,9 @@ impl RadiatingRowWidget<'_> {
                         (Some(peak), None) | (None, Some(peak)) => Some(peak),
                         (None, None) => None,
                     };
-                    meter::render_mono_channel(
-                        meter_area,
-                        buf,
-                        mono,
-                        self.config,
-                    );
+                    meter::render_mono(meter_area, buf, mono, self.config);
                 } else {
-                    meter::render_stereo_channel(
+                    meter::render_stereo(
                         meter_area,
                         buf,
                         left.zip(right),
@@ -1741,7 +1736,7 @@ impl RadiatingRowWidget<'_> {
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Fill(1), Constraint::Fill(1)])
                     .split(meter_area);
-                meter::render_mono_channel(half[0], buf, left, self.config);
+                meter::render_mono(half[0], buf, left, self.config);
             }
         }
 
@@ -2400,10 +2395,10 @@ mod tests {
         // show the same fill.
         node.peaks =
             Some(Arc::from([AtomicF32::new(1.0), AtomicF32::new(0.0)]));
-        // extracompat uses distinct glyphs for active (':') vs inactive
-        // ('.') per-channel meter cells - the default char_set uses the
-        // same glyph for both (styled by color only), which a plain-text
-        // render can't distinguish.
+        // extracompat uses distinct glyphs for active ('#') vs inactive
+        // ('=') meter cells - the default char_set uses the same glyph
+        // for both (styled by color only), which a plain-text render
+        // can't distinguish.
         let config = config::Config::from_toml_str(
             "char_set = \"extracompat\"\npeaks = \"auto\"",
         );
@@ -2411,9 +2406,9 @@ mod tests {
         let lines = render_node_lines(&config, &node, true, false, None);
 
         assert_eq!(lines.len(), 3);
-        assert!(lines[1].contains(':'), "loud channel should show fill");
+        assert!(lines[1].contains('#'), "loud channel should show fill");
         assert!(
-            !lines[2].contains(':'),
+            !lines[2].contains('#'),
             "silent channel should show no fill, proving it read its own \
              peak rather than channel 0's"
         );
@@ -2681,9 +2676,12 @@ mod tests {
             AtomicF32::new(0.0),
             AtomicF32::new(1.0),
         ]));
-        // extracompat's meter_channel_active (':') is distinct from its
-        // meter_left/right_active ('#') - forcing mono must fall back to
-        // the per-channel mono glyph, not attempt a stereo split.
+        // extracompat's meter_center_left_active ('[') only ever appears
+        // in a render_stereo call - render_mono only ever shows the
+        // right-side center char (']'). Checking for '[' distinguishes
+        // "rendered as a stereo split" from "rendered as one mono gauge"
+        // even though meter_left_active/meter_right_active/mono's own
+        // active glyph are all '#' in extracompat.
         let config = config::Config::from_toml_str(
             "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
              char_set = \"extracompat\"\npeaks = \"mono\"",
@@ -2692,23 +2690,23 @@ mod tests {
         let lines = render_node_lines(&config, &node, false, false, None);
 
         assert!(
-            !lines[1].contains('#'),
+            !lines[1].contains('['),
             "peaks = \"mono\" must not render a stereo split even for a \
              detected pair"
         );
         assert!(
-            lines[1].contains(':'),
+            lines[1].contains('#'),
             "a forced-mono pair row still needs some kind of gauge"
         );
     }
 
     #[test]
-    fn paired_and_unpaired_rows_share_the_same_monitor_glyph() {
-        // A pair row's own monitor gauge must read as visually
-        // consistent with its unpaired siblings in the same block - both
-        // use meter_channel_*, not meter_left/meter_right (the
-        // whole-node stereo meter's own glyph, which happens to be a
-        // completely different character in every built-in char_set).
+    fn paired_row_meter_uses_the_same_stock_glyphs_as_a_whole_node_meter() {
+        // Per-row monitors reuse the project's existing stock meter
+        // glyphs (meter_left/right/center_*) verbatim - no distinct
+        // "channel" glyph. A pair row's gauge is a real stereo split
+        // (render_stereo, same as MeterWidget's own whole-node stereo
+        // meter); an unpaired row's is a mono gauge (render_mono).
         use crate::atomic_f32::AtomicF32;
         use std::sync::Arc;
 
@@ -2723,29 +2721,22 @@ mod tests {
         ]));
         let config = config::Config::from_toml_str(
             "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
-             char_set = \"extracompat\"\npeaks = \"auto\"",
+             peaks = \"auto\"",
         );
 
         let lines = render_node_lines(&config, &node, false, false, None);
         assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
 
-        // extracompat's meter_channel_active is ':', distinct from
-        // meter_left/right_active's '#' - neither row should ever show
-        // '#'.
+        let meter_active = config.char_set.meter_left_active.as_str();
         assert!(
-            !lines[1].contains('#'),
-            "a pair row's monitor gauge must not use the whole-node \
+            lines[1].contains(meter_active),
+            "a pair row's monitor gauge should use the stock \
              meter_left/right glyph"
         );
         assert!(
-            lines[1].contains(':'),
-            "a pair row's monitor gauge should show its own peak using \
-             meter_channel_active"
-        );
-        assert!(
-            lines[2].contains(':'),
-            "the unpaired row's monitor gauge should use the same \
-             meter_channel_active glyph"
+            lines[2].contains(meter_active),
+            "an unpaired row's monitor gauge should use the same stock \
+             glyph too"
         );
     }
 

@@ -44,60 +44,6 @@ pub fn render_stereo(
     peaks: Option<(f32, f32)>,
     config: &Config,
 ) {
-    render_stereo_with_chars(
-        meter_area,
-        buf,
-        peaks,
-        config,
-        &config.char_set.meter_left_active,
-        &config.char_set.meter_left_overload,
-        &config.char_set.meter_left_inactive,
-        &config.char_set.meter_right_active,
-        &config.char_set.meter_right_overload,
-        &config.char_set.meter_right_inactive,
-    );
-}
-
-/// Same as [`render_stereo`], but for a detected pair's own row within a
-/// split display (`Stacked`, when `split_style = "radiating"`) - uses
-/// `meter_channel_*` for both sides instead of `meter_left_*`/
-/// `meter_right_*`, so a paired row's gauge reads as visually
-/// consistent with its unpaired siblings in the same block (both use
-/// the "channel" glyph), rather than looking like an unrelated
-/// whole-node meter that happens to share the block.
-pub fn render_stereo_channel(
-    meter_area: Rect,
-    buf: &mut Buffer,
-    peaks: Option<(f32, f32)>,
-    config: &Config,
-) {
-    render_stereo_with_chars(
-        meter_area,
-        buf,
-        peaks,
-        config,
-        &config.char_set.meter_channel_active,
-        &config.char_set.meter_channel_overload,
-        &config.char_set.meter_channel_inactive,
-        &config.char_set.meter_channel_active,
-        &config.char_set.meter_channel_overload,
-        &config.char_set.meter_channel_inactive,
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_stereo_with_chars(
-    meter_area: Rect,
-    buf: &mut Buffer,
-    peaks: Option<(f32, f32)>,
-    config: &Config,
-    left_active: &str,
-    left_overload: &str,
-    left_inactive: &str,
-    right_active: &str,
-    right_overload: &str,
-    right_inactive: &str,
-) {
     let layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -118,15 +64,15 @@ fn render_stereo_with_chars(
         render_peak(left_peak, area);
     Line::from(vec![
         Span::styled(
-            left_inactive.repeat(inactive_peak),
+            config.char_set.meter_left_inactive.repeat(inactive_peak),
             config.theme.meter_inactive,
         ),
         Span::styled(
-            left_overload.repeat(overload_peak),
+            config.char_set.meter_left_overload.repeat(overload_peak),
             config.theme.meter_overload,
         ),
         Span::styled(
-            left_active.repeat(active_peak),
+            config.char_set.meter_left_active.repeat(active_peak),
             config.theme.meter_active,
         ),
     ])
@@ -138,15 +84,15 @@ fn render_stereo_with_chars(
         render_peak(right_peak, area);
     Line::from(vec![
         Span::styled(
-            right_active.repeat(active_peak),
+            config.char_set.meter_right_active.repeat(active_peak),
             config.theme.meter_active,
         ),
         Span::styled(
-            right_overload.repeat(overload_peak),
+            config.char_set.meter_right_overload.repeat(overload_peak),
             config.theme.meter_overload,
         ),
         Span::styled(
-            right_inactive.repeat(inactive_peak),
+            config.char_set.meter_right_inactive.repeat(inactive_peak),
             config.theme.meter_inactive,
         ),
     ])
@@ -180,48 +126,6 @@ pub fn render_mono(
     peak: Option<f32>,
     config: &Config,
 ) {
-    render_mono_with_chars(
-        meter_area,
-        buf,
-        peak,
-        config,
-        &config.char_set.meter_right_active,
-        &config.char_set.meter_right_overload,
-        &config.char_set.meter_right_inactive,
-    );
-}
-
-/// Same as [`render_mono`], but for a single channel's own row within a
-/// split display (Channel mode, or any other multi-row layout) - uses
-/// `meter_channel_*` instead of `meter_right_*` so several of these
-/// stacked directly above one another read as distinct gauges rather
-/// than blending into one solid bar.
-pub fn render_mono_channel(
-    meter_area: Rect,
-    buf: &mut Buffer,
-    peak: Option<f32>,
-    config: &Config,
-) {
-    render_mono_with_chars(
-        meter_area,
-        buf,
-        peak,
-        config,
-        &config.char_set.meter_channel_active,
-        &config.char_set.meter_channel_overload,
-        &config.char_set.meter_channel_inactive,
-    );
-}
-
-fn render_mono_with_chars(
-    meter_area: Rect,
-    buf: &mut Buffer,
-    peak: Option<f32>,
-    config: &Config,
-    active_char: &str,
-    overload_char: &str,
-    inactive_char: &str,
-) {
     let mono_peak = peak.unwrap_or_default();
 
     let layout = Layout::default()
@@ -240,15 +144,15 @@ fn render_mono_with_chars(
         render_peak(mono_peak, area);
     Line::from(vec![
         Span::styled(
-            active_char.repeat(active_peak),
+            config.char_set.meter_right_active.repeat(active_peak),
             config.theme.meter_active,
         ),
         Span::styled(
-            overload_char.repeat(overload_peak),
+            config.char_set.meter_right_overload.repeat(overload_peak),
             config.theme.meter_overload,
         ),
         Span::styled(
-            inactive_char.repeat(inactive_peak),
+            config.char_set.meter_right_inactive.repeat(inactive_peak),
             config.theme.meter_inactive,
         ),
     ])
