@@ -530,9 +530,9 @@ impl StatefulWidget for NodeWidget<'_> {
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
-                    Constraint::Length(2), // _padding
-                    Constraint::Fill(9),   // volume_area
-                    Constraint::Fill(1),   // _padding
+                    Constraint::Length(NODE_VOLUME_PADDING), // _padding
+                    Constraint::Fill(9),                     // volume_area
+                    Constraint::Fill(1),                     // _padding
                 ])
                 .split(bar_area);
             // index 0 is _padding
@@ -551,11 +551,11 @@ impl StatefulWidget for NodeWidget<'_> {
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
-                    Constraint::Length(2), // _padding
-                    Constraint::Fill(4),   // volume_area
-                    Constraint::Fill(1),   // _padding
-                    Constraint::Fill(4),   // meter_area
-                    Constraint::Fill(1),   // _padding
+                    Constraint::Length(NODE_VOLUME_PADDING), // _padding
+                    Constraint::Fill(4),                     // volume_area
+                    Constraint::Fill(1),                     // _padding
+                    Constraint::Fill(4),                     // meter_area
+                    Constraint::Fill(1),                     // _padding
                 ])
                 .split(bar_area);
             // index 0 is _padding
@@ -1018,7 +1018,7 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
         // giving both bars the same explicit Length(bar_width) makes that
         // impossible by construction; any odd leftover column is simply
         // unused rather than handed to one side.
-        let fixed_width = 4 + 1 + 4; // label_l + center + label_r
+        let fixed_width = STEREO_VOLUME_LABEL_WIDTH * 2 + 1; // label_l + center + label_r
         let spacing_width = 4; // 4 gaps between the 5 segments, at 1 each
         let bar_width =
             area.width.saturating_sub(fixed_width + spacing_width) / 2;
@@ -1026,11 +1026,11 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(4),         // label_l
-                Constraint::Length(bar_width), // bar_l
-                Constraint::Length(1),         // center
-                Constraint::Length(bar_width), // bar_r
-                Constraint::Length(4),         // label_r
+                Constraint::Length(STEREO_VOLUME_LABEL_WIDTH), // label_l
+                Constraint::Length(bar_width),                 // bar_l
+                Constraint::Length(1),                         // center
+                Constraint::Length(bar_width),                 // bar_r
+                Constraint::Length(STEREO_VOLUME_LABEL_WIDTH), // label_r
             ])
             .spacing(1)
             .split(area);
@@ -1359,6 +1359,24 @@ impl StatefulWidget for ChannelRowWidget<'_> {
 /// comfortably under this).
 const RADIATING_LABEL_WIDTH: u16 =
     (channel_pairing::MAX_GROUP_NAME_WIDTH + 4) as u16;
+
+/// Left padding before a plain single-row node's volume content
+/// (`VolumeWidget`/`StereoVolumeWidget`, i.e. `Unified` or the classic
+/// single-pair `Radiating` fast path) - chosen so its bar starts at
+/// exactly the same absolute column every row in a `Stacked` block's
+/// radiating grid does, so a volume bar lines up across *every* node in
+/// the list, split or not, not just within one node's own split block.
+/// Solved directly from both layouts' fixed column widths (see
+/// `node_volume_padding_and_radiating_rows_share_a_bar_start_column`),
+/// not derived from `RADIATING_LABEL_WIDTH` by any general formula -
+/// they only happen to land on the same value with today's widths.
+const NODE_VOLUME_PADDING: u16 = RADIATING_LABEL_WIDTH;
+
+/// `StereoVolumeWidget`'s label_l/label_r width (was 4, one column
+/// short of what's needed once `NODE_VOLUME_PADDING` widened its
+/// leading gap) - the extra column closes the remaining gap to
+/// `NODE_VOLUME_PADDING`'s target column, same derivation.
+const STEREO_VOLUME_LABEL_WIDTH: u16 = 5;
 
 /// One row within a `Stacked` block, in the shared column grid a
 /// `split_style = "radiating"` context uses for every row alike: label |
@@ -1874,7 +1892,7 @@ mod tests {
             config::Config::from_toml_str("channel_display = \"always\"");
 
         // render_to_string uses a 40-wide area - the remaining bar space
-        // after fixed segments (40 - 13 = 27) is odd, exactly the case
+        // after fixed segments (40 - 15 = 25) is odd, exactly the case
         // that used to give the two Fill(1) bars unequal widths.
         let rendered = render_to_string(&config, &node);
 
@@ -2664,6 +2682,68 @@ mod tests {
         assert!(
             lines[1].contains('+'),
             "a forced-mono pair row still needs some kind of gauge"
+        );
+    }
+
+    #[test]
+    fn node_volume_padding_and_radiating_rows_share_a_bar_start_column() {
+        // Not just alignment *within* one node's own split block - every
+        // node's volume bar starts at the same column, whether it's a
+        // plain Unified single bar, the classic single-pair Radiating
+        // fast path, or a row inside a Stacked block.
+        let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let aux0 = libspa_sys::SPA_AUDIO_CHANNEL_AUX0;
+        let aux1 = libspa_sys::SPA_AUDIO_CHANNEL_AUX1;
+
+        // channel_display = "always" so the pair and AUX nodes actually
+        // split; a 1-channel node is always Unified regardless, so the
+        // same config works for all three. max_volume_percent = 100 so a
+        // raw volume of 1.0 fully saturates every bar (the default 150
+        // would leave StereoVolumeWidget/RadiatingRowWidget's "filled
+        // adjacent to center" bars only 2/3 full, leaving a genuine empty
+        // prefix before the fill - "first filled character" wouldn't
+        // reliably locate the bar's true start column in that case).
+        let config = config::Config::from_toml_str(
+            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+             peaks = \"off\"\nmax_volume_percent = 100.0",
+        );
+        let filled = config.char_set.volume_filled.as_str();
+        let bar_start = |lines: &[String]| -> usize {
+            lines
+                .iter()
+                .find_map(|line| line.find(filled))
+                .expect("a fully-filled bar somewhere in the rendered node")
+        };
+
+        let unified_node = test_node(Some(vec![mono]), vec![1.0]);
+        let unified_lines =
+            render_node_lines(&config, &unified_node, false, false, None);
+
+        let radiating_node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        let radiating_lines =
+            render_node_lines(&config, &radiating_node, false, false, None);
+
+        let stacked_node = test_node(Some(vec![aux0, aux1]), vec![1.0, 0.0]);
+        let stacked_lines =
+            render_node_lines(&config, &stacked_node, false, false, None);
+
+        let unified_start = bar_start(&unified_lines);
+        let radiating_start = bar_start(&radiating_lines);
+        let stacked_start = bar_start(&stacked_lines);
+
+        assert_eq!(
+            unified_start, radiating_start,
+            "a Unified node's bar must start at the same column as the \
+             classic single-pair Radiating fast path's does"
+        );
+        assert_eq!(
+            radiating_start, stacked_start,
+            "the classic single-pair Radiating fast path must start its \
+             bar at the same column a Stacked block's radiating row \
+             does - bars line up across every node in the list, not \
+             just within one node's own split block"
         );
     }
 }
