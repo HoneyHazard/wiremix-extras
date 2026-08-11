@@ -50,12 +50,19 @@ enum VolumeDisplay {
     /// One combined bar/row - today's stock behavior.
     Unified,
     /// Two bars sharing one row, radiating from a shared center marker.
-    /// Only ever chosen for a detected 2-channel left/right pair.
+    /// Only chosen when a node's *entire* channel layout is exactly one
+    /// detected left/right pair and nothing else - the common case
+    /// (plain stereo hardware), rendered at the classic fixed height.
+    /// Anything with more channels than that (extra unpaired channels
+    /// alongside a pair, more than one pair, or no pair at all) uses
+    /// `Stacked` instead, so nothing is ever silently left off-screen.
     Radiating {
         left_index: usize,
         right_index: usize,
     },
-    /// One row per channel.
+    /// One row per `display_rows()` group: a detected left/right pair
+    /// becomes its own radiating row when split_style = "radiating",
+    /// otherwise (or for any unpaired channel) it's one row per channel.
     Stacked,
 }
 
@@ -89,16 +96,44 @@ fn volume_display(
 
     match channel_state.split_style {
         SplitStyle::Stacked => VolumeDisplay::Stacked,
-        SplitStyle::Radiating => match stereo_pair(node) {
+        SplitStyle::Radiating => match single_pair(node) {
             Some((left_index, right_index)) => VolumeDisplay::Radiating {
                 left_index,
                 right_index,
             },
-            // Not a detected pair (odd channel count, or channels with
-            // no left/right naming) - nothing for radiating to grow
-            // from center, fall back to stacked.
+            // Either no pair at all, or more going on than just one
+            // simple pair (extra channels, or more than one pair) -
+            // `Stacked`'s per-group layout handles both.
             None => VolumeDisplay::Stacked,
         },
+    }
+}
+
+/// The row layout `Stacked` should use: one entry per row, in render
+/// order. A detected left/right pair collapses to a single
+/// `ChannelGroup::Pair` row (rendered as a radiating mini-bar) only when
+/// split_style = "radiating" and channel_mode is off - Channel mode
+/// always wants every raw channel individually addressable (radiating's
+/// marker-placement problem for a cursored channel isn't solved), and
+/// split_style = "stacked" means exactly what it says. Without
+/// `positions` data there's nothing to pair from, so every channel is
+/// its own row regardless.
+fn display_rows(
+    channel_state: ChannelState,
+    node: &view::Node,
+) -> Vec<ChannelGroup> {
+    let per_channel =
+        || (0..node.volumes.len()).map(ChannelGroup::Single).collect();
+
+    if channel_state.channel_mode
+        || channel_state.split_style == SplitStyle::Stacked
+    {
+        return per_channel();
+    }
+
+    match node.positions.as_ref() {
+        Some(positions) => channel_pairing::group_channels(positions),
+        None => per_channel(),
     }
 }
 
@@ -190,11 +225,15 @@ impl<'a> NodeWidget<'a> {
 
     /// Height of `node`'s display given the current channel state -
     /// stacked display expands a node with more than one channel into one
-    /// header line plus one line per channel; everything else renders at
-    /// the ordinary fixed `height()`.
+    /// header line plus one line per `display_rows()` group (a detected
+    /// pair rendered as radiating counts as one row, same as any single
+    /// channel); everything else renders at the ordinary fixed
+    /// `height()`.
     pub fn node_height(channel_state: ChannelState, node: &view::Node) -> u16 {
         match volume_display(channel_state, node) {
-            VolumeDisplay::Stacked => 1 + node.volumes.len() as u16,
+            VolumeDisplay::Stacked => {
+                1 + display_rows(channel_state, node).len() as u16
+            }
             _ => Self::height(),
         }
     }
@@ -233,22 +272,23 @@ impl<'a> NodeWidget<'a> {
         Rect::new(x, y, width, height)
     }
 
-    /// Channel mode display: one header line (title/target, same as the
-    /// ordinary layout) followed by one line per channel, each its own
-    /// independently addressable volume bar. See `node_height` for the
+    /// Split display: one header line (title/target, same as the ordinary
+    /// layout) followed by one line per `display_rows()` group - a single
+    /// channel's own row, or (split_style = "radiating", linked setting)
+    /// a detected pair's radiating row. See `node_height` for the
     /// matching height calculation.
     fn render_channel_rows(
         &self,
         area: Rect,
         buf: &mut Buffer,
         mouse_areas: &mut Vec<MouseArea>,
-        channel_count: usize,
+        groups: &[ChannelGroup],
     ) {
         let mut constraints = vec![Constraint::Length(1)]; // header_row
         constraints.extend(
-            std::iter::repeat(Constraint::Length(1)).take(channel_count),
+            std::iter::repeat(Constraint::Length(1)).take(groups.len()),
         );
-        let rows = Layout::default()
+        let row_areas = Layout::default()
             .direction(Direction::Vertical)
             .constraints(constraints)
             .split(area);
@@ -263,32 +303,112 @@ impl<'a> NodeWidget<'a> {
                 .split(row)
         };
 
-        // The header row deliberately never shows the selector marker in
-        // Channel mode - only the individually-targeted channel row does,
-        // so there's exactly one place to look for "which channel is
-        // this" rather than two markers competing for attention. The
-        // marker_area column is still reserved here (unrendered) purely
-        // so the header text lines up with the channel rows below it.
-        let header_split = row_layout(rows[0]);
+        // In Channel mode (individual setting), the header row deliberately
+        // never shows the selector marker - only the individually-targeted
+        // channel row does, so there's exactly one place to look for
+        // "which channel is this" rather than two markers competing for
+        // attention. But when display is split for some other reason
+        // (linked mode's split_style = "stacked", a pair-less device like
+        // AUX0/AUX1 falling back from "radiating", or a radiating pair
+        // row - which is never individually targetable) there is no
+        // individually-targeted channel at all - the whole node is still
+        // the selection unit, so the header row is the only place left to
+        // show it. Without this, a selected node with no channel pair
+        // would render with no visible selector anywhere.
+        let header_split = row_layout(row_areas[0]);
+        let header_marked = self.selected && !self.channel_state.channel_mode;
+        if header_marked {
+            Span::styled(
+                &self.config.char_set.selector_middle,
+                self.config.theme.selector,
+            )
+            .render(header_split[0], buf);
+        }
         HeaderWidget::new(self.config, self.device_kind, self.node).render(
             header_split[1],
             buf,
             mouse_areas,
         );
 
-        for channel_index in 0..channel_count {
-            let split = row_layout(rows[channel_index + 1]);
-            let marked =
-                self.selected && self.selected_channel == Some(channel_index);
-            if marked {
-                Span::styled(
-                    &self.config.char_set.selector_middle,
-                    self.config.theme.selector,
-                )
-                .render(split[0], buf);
+        // A pair row needs roughly twice the fixed overhead a single
+        // channel row does (a label plus percentage on *each* side), so
+        // left to size themselves independently, a paired row's bars
+        // would end up visibly shorter than a single channel row's bar
+        // for the same volume - purely a layout artifact, not a real
+        // scale difference. Whenever this block has at least one pair
+        // row, compute one shared bar_width from the pair row's own
+        // (tighter) constraints and give every row - paired or single -
+        // the same width, so 100% always means the same number of
+        // characters everywhere in the block.
+        let bar_width = groups
+            .iter()
+            .any(|group| matches!(group, ChannelGroup::Pair(_, _)))
+            .then(|| {
+                let content_width = Self::split_row_content_width(
+                    self.config,
+                    row_layout(row_areas[1])[1],
+                );
+                RadiatingChannelRowWidget::bar_width(content_width)
+            });
+
+        for (row_index, group) in groups.iter().enumerate() {
+            let split = row_layout(row_areas[row_index + 1]);
+            match *group {
+                ChannelGroup::Single(channel_index) => {
+                    let marked = self.channel_state.channel_mode
+                        && self.selected
+                        && self.selected_channel == Some(channel_index);
+                    if marked {
+                        Span::styled(
+                            &self.config.char_set.selector_middle,
+                            self.config.theme.selector,
+                        )
+                        .render(split[0], buf);
+                    }
+                    ChannelRowWidget::new(
+                        self.config,
+                        self.node,
+                        channel_index,
+                        bar_width,
+                    )
+                    .render(split[1], buf, mouse_areas);
+                }
+                ChannelGroup::Pair(left_index, right_index) => {
+                    RadiatingChannelRowWidget::new(
+                        self.config,
+                        self.node,
+                        left_index,
+                        right_index,
+                        bar_width.expect(
+                            "a pair row's presence is exactly the \
+                             condition bar_width was computed from",
+                        ),
+                    )
+                    .render(split[1], buf, mouse_areas);
+                }
             }
-            ChannelRowWidget::new(self.config, self.node, channel_index)
-                .render(split[1], buf, mouse_areas);
+        }
+    }
+
+    /// The width available for a split row's own content once the peak
+    /// meter (if enabled) has claimed its share - matches the
+    /// row/meter split every `Stacked` row widget applies internally, so
+    /// a bar_width computed from this figure lines up with what those
+    /// widgets will actually do with the same area.
+    fn split_row_content_width(config: &Config, row_area: Rect) -> u16 {
+        if config.peaks == Peaks::Off {
+            row_area.width
+        } else {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints(vec![
+                    Constraint::Fill(4), // row_area
+                    Constraint::Fill(1), // _padding
+                    Constraint::Fill(4), // meter_area
+                ])
+                .spacing(1)
+                .split(row_area)[0]
+                .width
         }
     }
 }
@@ -338,12 +458,8 @@ impl StatefulWidget for NodeWidget<'_> {
             self.elapsed_seconds,
         );
         if display == VolumeDisplay::Stacked {
-            self.render_channel_rows(
-                area,
-                buf,
-                mouse_areas,
-                self.node.volumes.len(),
-            );
+            let groups = display_rows(self.channel_state, self.node);
+            self.render_channel_rows(area, buf, mouse_areas, &groups);
             return;
         }
 
@@ -594,19 +710,35 @@ impl StatefulWidget for HeaderWidget<'_> {
     }
 }
 
-/// The first detected left/right channel pair on `node`, for a radiating
-/// display to render. `None` if the node has no `positions` data at all,
-/// or none of its channels pair (see `channel_pairing`) - callers fall
-/// back to stacked (or the ordinary single-bar `VolumeWidget`) in that
-/// case.
-fn stereo_pair(node: &view::Node) -> Option<(usize, usize)> {
+/// `Some((left, right))` only when `node`'s *entire* channel layout is
+/// exactly one detected left/right pair and nothing else - the common
+/// case (plain stereo hardware), which fits the classic single-row,
+/// fixed-height `VolumeDisplay::Radiating`. `None` for anything else
+/// (no positions data, no pair at all, extra unpaired channels alongside
+/// a pair, or more than one pair) - those all need `Stacked`'s per-group
+/// row layout instead, so nothing ends up silently unrendered.
+fn single_pair(node: &view::Node) -> Option<(usize, usize)> {
     let positions = node.positions.as_ref()?;
-    channel_pairing::group_channels(positions)
-        .into_iter()
-        .find_map(|group| match group {
-            ChannelGroup::Pair(left, right) => Some((left, right)),
-            ChannelGroup::Single(_) => None,
-        })
+    let mut groups = channel_pairing::group_channels(positions).into_iter();
+    match (groups.next(), groups.next()) {
+        (Some(ChannelGroup::Pair(left, right)), None) => Some((left, right)),
+        _ => None,
+    }
+}
+
+/// A short label identifying which physical pair a radiating row within
+/// a `Stacked` block belongs to - just the pair's left channel's own
+/// name (`FL` for the FL/FR pair, `RL` for RL/RR, ...), rather than
+/// spelling out both sides, since every pair in `channel_pairing`'s
+/// `LR_PAIRS` already has a unique left channel. Only ever needed here -
+/// the classic single-pair `VolumeDisplay::Radiating` fast path has no
+/// sibling row to disambiguate from, so it never calls this.
+fn pair_label(node: &view::Node, left_index: usize) -> String {
+    node.positions
+        .as_ref()
+        .and_then(|positions| positions.get(left_index))
+        .map(|&position| channel_pairing::channel_name(position))
+        .unwrap_or_else(|| left_index.to_string())
 }
 
 /// Renders a node's volume within a single-row area - the resolved
@@ -985,6 +1117,14 @@ struct ChannelRowWidget<'a> {
     config: &'a Config,
     node: &'a view::Node,
     channel_index: usize,
+    /// Externally-supplied bar width, shared across every row in the
+    /// same block so a single channel's bar and a radiating pair row's
+    /// bars represent the same volume-to-character scale (see
+    /// `NodeWidget::render_channel_rows`). `None` stretches the bar to
+    /// fill the row as usual - every block without a pair row in it
+    /// (Channel mode, split_style = "stacked", or an all-unpaired
+    /// fallback) has nothing else to stay consistent with.
+    bar_width: Option<u16>,
 }
 
 impl<'a> ChannelRowWidget<'a> {
@@ -992,11 +1132,13 @@ impl<'a> ChannelRowWidget<'a> {
         config: &'a Config,
         node: &'a view::Node,
         channel_index: usize,
+        bar_width: Option<u16>,
     ) -> Self {
         Self {
             config,
             node,
             channel_index,
+            bar_width,
         }
     }
 }
@@ -1029,11 +1171,15 @@ impl StatefulWidget for ChannelRowWidget<'_> {
             (layout[0], Some(layout[2]))
         };
 
+        let bar_constraint = match self.bar_width {
+            Some(width) => Constraint::Length(width),
+            None => Constraint::Min(0),
+        };
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Length(11), // volume_label: label_col + percent_col
-                Constraint::Min(0),     // volume_bar
+                bar_constraint,         // volume_bar
             ])
             .spacing(1)
             .split(row_area);
@@ -1153,9 +1299,257 @@ impl StatefulWidget for ChannelRowWidget<'_> {
                 .as_deref()
                 .and_then(|peaks| peaks.get(channel_index))
                 .map(|peak| peak.load());
-            meter::render_mono(meter_area, buf, peak, self.config);
+            meter::render_mono_channel(meter_area, buf, peak, self.config);
             self.node.peaks_dirty.store(false, Ordering::Relaxed);
         }
+    }
+}
+
+/// A detected left/right pair's own row within a `Stacked` block - the
+/// same two-bars-from-center idea as `StereoVolumeWidget`'s classic
+/// single-row display, but sized to share space with sibling rows
+/// (other pairs, or unpaired single channels) rather than owning the
+/// whole bar area, and prefixed with a short `pair_label` since - unlike
+/// the classic fast path - there's always at least one sibling row here
+/// to tell apart from.
+struct RadiatingChannelRowWidget<'a> {
+    config: &'a Config,
+    node: &'a view::Node,
+    left_index: usize,
+    right_index: usize,
+    /// Shared across every row in the block - see
+    /// `NodeWidget::render_channel_rows`.
+    bar_width: u16,
+}
+
+impl<'a> RadiatingChannelRowWidget<'a> {
+    fn new(
+        config: &'a Config,
+        node: &'a view::Node,
+        left_index: usize,
+        right_index: usize,
+        bar_width: u16,
+    ) -> Self {
+        Self {
+            config,
+            node,
+            left_index,
+            right_index,
+            bar_width,
+        }
+    }
+
+    /// `bar_width` for a row of this shape (a `pair_label` column added
+    /// in front of the classic `StereoVolumeWidget` layout) given the
+    /// width available for the row's own content - see
+    /// `NodeWidget::split_row_content_width`. Kept in sync with the
+    /// exact column layout `render` below actually uses.
+    fn bar_width(content_width: u16) -> u16 {
+        let fixed_width = 4 + 4 + 1 + 4; // pair_label + label_l + center + label_r
+        let spacing_width = 5; // 5 gaps between the 6 segments, at 1 each
+        content_width.saturating_sub(fixed_width + spacing_width) / 2
+    }
+}
+
+impl StatefulWidget for RadiatingChannelRowWidget<'_> {
+    type State = Vec<MouseArea>;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let mouse_areas = state;
+
+        // Split style rows split their own monitor too, same rule as
+        // `ChannelRowWidget` - a pair row shows a real stereo gauge
+        // (rather than a mono one) since it's already displaying two
+        // channels' worth of volume.
+        let (row_area, meter_area) = if self.config.peaks == Peaks::Off {
+            (area, None)
+        } else {
+            let layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints(vec![
+                    Constraint::Fill(4), // row_area
+                    Constraint::Fill(1), // _padding
+                    Constraint::Fill(4), // meter_area
+                ])
+                .spacing(1)
+                .split(area);
+            (layout[0], Some(layout[2]))
+        };
+
+        if self.node.mute {
+            Line::from("muted")
+                .alignment(Alignment::Center)
+                .render(row_area, buf);
+            mouse_areas.push((
+                row_area,
+                smallvec![MouseEventKind::Down(MouseButton::Left)],
+                smallvec![
+                    Action::SelectObject(self.node.object_id),
+                    Action::ToggleMute
+                ],
+            ));
+            if let Some(meter_area) = meter_area {
+                self.render_meter(meter_area, buf);
+            }
+            return;
+        }
+
+        let max_volume = self.config.max_volume_percent / 100.0;
+
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(4),              // pair_label
+                Constraint::Length(4),              // label_l
+                Constraint::Length(self.bar_width), // bar_l
+                Constraint::Length(1),              // center
+                Constraint::Length(self.bar_width), // bar_r
+                Constraint::Length(4),              // label_r
+            ])
+            .spacing(1)
+            .split(row_area);
+        let pair_label_area = layout[0];
+        let label_l = layout[1];
+        let bar_l = layout[2];
+        let center = layout[3];
+        let bar_r = layout[4];
+        let label_r = layout[5];
+
+        Line::from(Span::styled(
+            pair_label(self.node, self.left_index),
+            self.config.theme.volume,
+        ))
+        .alignment(Alignment::Right)
+        .render(pair_label_area, buf);
+
+        let volumes = &self.node.volumes;
+        let left_volume =
+            volumes.get(self.left_index).copied().unwrap_or(0.0).cbrt();
+        let right_volume =
+            volumes.get(self.right_index).copied().unwrap_or(0.0).cbrt();
+
+        Line::from(Span::styled(
+            format!("{}%", (left_volume * 100.0).round() as u32),
+            self.config.theme.volume,
+        ))
+        .alignment(Alignment::Right)
+        .render(label_l, buf);
+
+        Line::from(Span::styled(
+            format!("{}%", (right_volume * 100.0).round() as u32),
+            self.config.theme.volume,
+        ))
+        .render(label_r, buf);
+
+        Line::from(Span::styled("|", self.config.theme.volume))
+            .alignment(Alignment::Center)
+            .render(center, buf);
+
+        let left_count = ((left_volume.clamp(0.0, max_volume) / max_volume)
+            * bar_l.width as f32)
+            .round() as usize;
+        Line::from(vec![
+            Span::styled(
+                self.config
+                    .char_set
+                    .volume_empty
+                    .repeat((bar_l.width as usize).saturating_sub(left_count)),
+                self.config.theme.volume_empty,
+            ),
+            Span::styled(
+                self.config.char_set.volume_filled.repeat(left_count),
+                self.config.theme.volume_filled,
+            ),
+        ])
+        .render(bar_l, buf);
+
+        let right_count = ((right_volume.clamp(0.0, max_volume) / max_volume)
+            * bar_r.width as f32)
+            .round() as usize;
+        Line::from(vec![
+            Span::styled(
+                self.config.char_set.volume_filled.repeat(right_count),
+                self.config.theme.volume_filled,
+            ),
+            Span::styled(
+                self.config
+                    .char_set
+                    .volume_empty
+                    .repeat((bar_r.width as usize).saturating_sub(right_count)),
+                self.config.theme.volume_empty,
+            ),
+        ])
+        .render(bar_r, buf);
+
+        for (label_area, channel_index) in
+            [(label_l, self.left_index), (label_r, self.right_index)]
+        {
+            mouse_areas.push((
+                label_area,
+                smallvec![MouseEventKind::Down(MouseButton::Left)],
+                smallvec![
+                    Action::SelectObject(self.node.object_id),
+                    Action::SelectChannel(channel_index),
+                    Action::ToggleMute
+                ],
+            ));
+        }
+
+        for (bar, channel_index, from_center) in [
+            (bar_l, self.left_index, true),
+            (bar_r, self.right_index, false),
+        ] {
+            for i in 0..=bar.width {
+                let x = if from_center {
+                    bar.x.saturating_add(bar.width.saturating_sub(i))
+                } else {
+                    bar.x.saturating_add(i)
+                };
+                let volume_area = Rect::new(x, bar.y, 1, bar.height);
+
+                let volume_step = max_volume / bar.width as f32;
+                let volume = volume_step * i as f32;
+                let sticky_volume = if (1.0 - volume).abs() <= volume_step {
+                    1.0
+                } else {
+                    volume
+                };
+
+                mouse_areas.push((
+                    volume_area,
+                    smallvec![
+                        MouseEventKind::Down(MouseButton::Left),
+                        MouseEventKind::Drag(MouseButton::Left),
+                    ],
+                    smallvec![
+                        Action::SelectObject(self.node.object_id),
+                        Action::SelectChannel(channel_index),
+                        Action::SetChannelAbsoluteVolume(
+                            channel_index,
+                            sticky_volume
+                        ),
+                    ],
+                ));
+            }
+        }
+
+        if let Some(meter_area) = meter_area {
+            self.render_meter(meter_area, buf);
+        }
+    }
+}
+
+impl RadiatingChannelRowWidget<'_> {
+    fn render_meter(&self, meter_area: Rect, buf: &mut Buffer) {
+        let peaks = self.node.peaks.as_deref();
+        let left = peaks
+            .and_then(|peaks| peaks.get(self.left_index))
+            .map(|p| p.load());
+        let right = peaks
+            .and_then(|peaks| peaks.get(self.right_index))
+            .map(|p| p.load());
+        meter::render_stereo(meter_area, buf, left.zip(right), self.config);
+        self.node.peaks_dirty.store(false, Ordering::Relaxed);
     }
 }
 
@@ -1332,25 +1726,51 @@ mod tests {
     }
 
     #[test]
-    fn stereo_pair_finds_the_first_named_lr_pair() {
+    fn single_pair_finds_a_lone_named_lr_pair() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
-        assert_eq!(stereo_pair(&node), Some((0, 1)));
+        assert_eq!(single_pair(&node), Some((0, 1)));
     }
 
     #[test]
-    fn stereo_pair_none_without_positions() {
+    fn single_pair_none_without_positions() {
         let node = test_node(None, vec![1.0, 0.0]);
-        assert_eq!(stereo_pair(&node), None);
+        assert_eq!(single_pair(&node), None);
     }
 
     #[test]
-    fn stereo_pair_none_for_generic_aux_channels() {
+    fn single_pair_none_for_generic_aux_channels() {
         let aux0 = libspa_sys::SPA_AUDIO_CHANNEL_AUX0;
         let aux1 = libspa_sys::SPA_AUDIO_CHANNEL_AUX1;
         let node = test_node(Some(vec![aux0, aux1]), vec![1.0, 0.0]);
-        assert_eq!(stereo_pair(&node), None);
+        assert_eq!(single_pair(&node), None);
+    }
+
+    #[test]
+    fn single_pair_none_when_more_than_one_pair() {
+        // The user's real 5.1 hardware: "M-Audio Sonica Theater Analog
+        // Surround 5.1" -> FL,FR,RL,RR,FC,LFE. Radiating's classic
+        // single-row fast path must not claim this - two pairs plus two
+        // singles need `Stacked`'s multi-row layout, or four of the six
+        // channels would never be rendered or clickable at all.
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let rl = libspa_sys::SPA_AUDIO_CHANNEL_RL;
+        let rr = libspa_sys::SPA_AUDIO_CHANNEL_RR;
+        let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        let lfe = libspa_sys::SPA_AUDIO_CHANNEL_LFE;
+        let node = test_node(Some(vec![fl, fr, rl, rr, fc, lfe]), vec![0.5; 6]);
+        assert_eq!(single_pair(&node), None);
+    }
+
+    #[test]
+    fn single_pair_none_with_extra_channel_alongside_a_pair() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        let node = test_node(Some(vec![fl, fr, fc]), vec![0.5; 3]);
+        assert_eq!(single_pair(&node), None);
     }
 
     #[test]
@@ -1499,6 +1919,76 @@ mod tests {
         state.channel_display = ChannelDisplay::Always;
         state.split_style = SplitStyle::Stacked;
         assert_eq!(volume_display(state, &node), VolumeDisplay::Stacked);
+    }
+
+    #[test]
+    fn volume_display_stacked_for_multi_pair_device_even_with_radiating() {
+        // The Sonica Theater case: split_style asks for radiating, but
+        // there's more than a single simple pair here, so this must NOT
+        // take the classic single-row Radiating fast path (which would
+        // silently drop four of the six channels).
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let rl = libspa_sys::SPA_AUDIO_CHANNEL_RL;
+        let rr = libspa_sys::SPA_AUDIO_CHANNEL_RR;
+        let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        let lfe = libspa_sys::SPA_AUDIO_CHANNEL_LFE;
+        let node = test_node(Some(vec![fl, fr, rl, rr, fc, lfe]), vec![0.5; 6]);
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Always;
+        state.split_style = SplitStyle::Radiating;
+        assert_eq!(volume_display(state, &node), VolumeDisplay::Stacked);
+    }
+
+    #[test]
+    fn display_rows_radiating_collapses_pairs_and_keeps_singles() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let rl = libspa_sys::SPA_AUDIO_CHANNEL_RL;
+        let rr = libspa_sys::SPA_AUDIO_CHANNEL_RR;
+        let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        let lfe = libspa_sys::SPA_AUDIO_CHANNEL_LFE;
+        let node = test_node(Some(vec![fl, fr, rl, rr, fc, lfe]), vec![0.5; 6]);
+        let mut state = channel_state(false);
+        state.split_style = SplitStyle::Radiating;
+
+        assert_eq!(
+            display_rows(state, &node),
+            vec![
+                ChannelGroup::Pair(0, 1),
+                ChannelGroup::Pair(2, 3),
+                ChannelGroup::Single(4),
+                ChannelGroup::Single(5),
+            ]
+        );
+    }
+
+    #[test]
+    fn display_rows_stacked_style_ignores_pairing() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
+        let mut state = channel_state(false);
+        state.split_style = SplitStyle::Stacked;
+
+        assert_eq!(
+            display_rows(state, &node),
+            vec![ChannelGroup::Single(0), ChannelGroup::Single(1)]
+        );
+    }
+
+    #[test]
+    fn display_rows_channel_mode_ignores_pairing_even_with_radiating() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
+        let mut state = channel_state(true);
+        state.split_style = SplitStyle::Radiating;
+
+        assert_eq!(
+            display_rows(state, &node),
+            vec![ChannelGroup::Single(0), ChannelGroup::Single(1)]
+        );
     }
 
     #[test]
@@ -1659,6 +2149,26 @@ mod tests {
     }
 
     #[test]
+    fn node_height_radiating_counts_groups_not_raw_channels() {
+        // Sonica Theater: 6 raw channels, but only 4 display_rows groups
+        // (2 pairs + 2 singles) - height must follow the groups, or the
+        // rendered rows would run past the area NodeWidget was given.
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let rl = libspa_sys::SPA_AUDIO_CHANNEL_RL;
+        let rr = libspa_sys::SPA_AUDIO_CHANNEL_RR;
+        let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        let lfe = libspa_sys::SPA_AUDIO_CHANNEL_LFE;
+        let node = test_node(Some(vec![fl, fr, rl, rr, fc, lfe]), vec![0.5; 6]);
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Always;
+        state.split_style = SplitStyle::Radiating;
+
+        // 1 header line + 4 group rows
+        assert_eq!(NodeWidget::node_height(state, &node), 5);
+    }
+
+    #[test]
     fn channel_mode_renders_one_line_per_channel() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
@@ -1689,10 +2199,10 @@ mod tests {
         // show the same fill.
         node.peaks =
             Some(Arc::from([AtomicF32::new(1.0), AtomicF32::new(0.0)]));
-        // extracompat uses distinct glyphs for active ('#') vs inactive
-        // ('=') meter cells - the default char_set uses the same glyph
-        // for both (styled by color only), which a plain-text render
-        // can't distinguish.
+        // extracompat uses distinct glyphs for active ('+') vs inactive
+        // ('-') per-channel meter cells - the default char_set uses the
+        // same glyph for both (styled by color only), which a plain-text
+        // render can't distinguish.
         let config = config::Config::from_toml_str(
             "char_set = \"extracompat\"\npeaks = \"auto\"",
         );
@@ -1700,9 +2210,9 @@ mod tests {
         let lines = render_node_lines(&config, &node, true, false, None);
 
         assert_eq!(lines.len(), 3);
-        assert!(lines[1].contains('#'), "loud channel should show fill");
+        assert!(lines[1].contains('+'), "loud channel should show fill");
         assert!(
-            !lines[2].contains('#'),
+            !lines[2].contains('+'),
             "silent channel should show no fill, proving it read its own \
              peak rather than channel 0's"
         );
@@ -1806,5 +2316,98 @@ mod tests {
 
         let lines = render_node_lines(&config, &node, true, true, Some(0));
         assert!(!lines[0].contains(marker));
+    }
+
+    #[test]
+    fn linked_mode_split_marks_the_header_row_since_no_channel_is_targeted() {
+        // AUX0/AUX1 never pair, so with split_style = "stacked" (or
+        // radiating falling back, same thing) the node still renders
+        // split even in linked mode (channel_mode = false). There's no
+        // individually-targeted channel here - the whole node is the
+        // selection unit - so the header row must carry the marker or a
+        // selected node would show no marker anywhere at all.
+        let aux0 = libspa_sys::SPA_AUDIO_CHANNEL_AUX0;
+        let aux1 = libspa_sys::SPA_AUDIO_CHANNEL_AUX1;
+        let node = test_node(Some(vec![aux0, aux1]), vec![0.5, 0.5]);
+        let config = config::Config::from_toml_str(
+            "channel_display = \"always\"\nsplit_style = \"stacked\"",
+        );
+        let marker = config.char_set.selector_middle.as_str();
+
+        let selected = render_node_lines(&config, &node, false, true, None);
+        assert!(
+            selected[0].contains(marker),
+            "selected linked-mode node must mark its header row"
+        );
+        assert!(!selected[1].contains(marker));
+        assert!(!selected[2].contains(marker));
+
+        let not_selected =
+            render_node_lines(&config, &node, false, false, None);
+        assert!(!not_selected[0].contains(marker));
+    }
+
+    #[test]
+    fn radiating_multi_pair_renders_every_channel() {
+        // Sonica Theater: verifies the multi-pair fix actually renders
+        // all six channels (not just the first pair), each pair gets a
+        // short disambiguating label, and singles keep their own
+        // channel_name label - nothing from the user's real hardware
+        // layout goes missing or unclickable.
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let rl = libspa_sys::SPA_AUDIO_CHANNEL_RL;
+        let rr = libspa_sys::SPA_AUDIO_CHANNEL_RR;
+        let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        let lfe = libspa_sys::SPA_AUDIO_CHANNEL_LFE;
+        let node = test_node(
+            Some(vec![fl, fr, rl, rr, fc, lfe]),
+            vec![1.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+        );
+        let config = config::Config::from_toml_str(
+            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+             peaks = \"off\"",
+        );
+
+        let lines = render_node_lines(&config, &node, false, false, None);
+
+        assert_eq!(lines.len(), 5); // header + 2 pair rows + 2 single rows
+        assert!(lines[1].contains("FL"));
+        assert!(lines[1].contains("100%"));
+        assert!(lines[2].contains("RL"));
+        assert!(lines[2].contains("100%"));
+        assert!(lines[3].contains("FC"));
+        assert!(lines[3].contains("100%"));
+        assert!(lines[4].contains("LFE"));
+    }
+
+    #[test]
+    fn radiating_single_row_bar_matches_pair_row_bar_length() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        // FL maxed (one side of a pair row), FC maxed (a lone single row
+        // alongside it) - both must fill the *same* number of
+        // characters, since render_channel_rows now shares one
+        // bar_width across the whole block instead of letting the
+        // single row stretch to fill all its own leftover width.
+        let node = test_node(Some(vec![fl, fr, fc]), vec![1.0, 0.0, 1.0]);
+        let config = config::Config::from_toml_str(
+            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+             peaks = \"off\"",
+        );
+
+        let lines = render_node_lines(&config, &node, false, false, None);
+        assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
+
+        let filled = config.char_set.volume_filled.as_str();
+        let pair_row_filled = lines[1].matches(filled).count();
+        let single_row_filled = lines[2].matches(filled).count();
+        assert!(pair_row_filled > 0);
+        assert_eq!(
+            pair_row_filled, single_row_filled,
+            "a maxed single channel row must fill the same number of \
+             characters as a maxed side of a radiating pair row"
+        );
     }
 }

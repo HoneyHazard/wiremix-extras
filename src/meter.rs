@@ -126,6 +126,48 @@ pub fn render_mono(
     peak: Option<f32>,
     config: &Config,
 ) {
+    render_mono_with_chars(
+        meter_area,
+        buf,
+        peak,
+        config,
+        &config.char_set.meter_right_active,
+        &config.char_set.meter_right_overload,
+        &config.char_set.meter_right_inactive,
+    );
+}
+
+/// Same as [`render_mono`], but for a single channel's own row within a
+/// split display (Channel mode, or any other multi-row layout) - uses
+/// `meter_channel_*` instead of `meter_right_*` so several of these
+/// stacked directly above one another read as distinct gauges rather
+/// than blending into one solid bar.
+pub fn render_mono_channel(
+    meter_area: Rect,
+    buf: &mut Buffer,
+    peak: Option<f32>,
+    config: &Config,
+) {
+    render_mono_with_chars(
+        meter_area,
+        buf,
+        peak,
+        config,
+        &config.char_set.meter_channel_active,
+        &config.char_set.meter_channel_overload,
+        &config.char_set.meter_channel_inactive,
+    );
+}
+
+fn render_mono_with_chars(
+    meter_area: Rect,
+    buf: &mut Buffer,
+    peak: Option<f32>,
+    config: &Config,
+    active_char: &str,
+    overload_char: &str,
+    inactive_char: &str,
+) {
     let mono_peak = peak.unwrap_or_default();
 
     let layout = Layout::default()
@@ -144,15 +186,15 @@ pub fn render_mono(
         render_peak(mono_peak, area);
     Line::from(vec![
         Span::styled(
-            config.char_set.meter_right_active.repeat(active_peak),
+            active_char.repeat(active_peak),
             config.theme.meter_active,
         ),
         Span::styled(
-            config.char_set.meter_right_overload.repeat(overload_peak),
+            overload_char.repeat(overload_peak),
             config.theme.meter_overload,
         ),
         Span::styled(
-            config.char_set.meter_right_inactive.repeat(inactive_peak),
+            inactive_char.repeat(inactive_peak),
             config.theme.meter_inactive,
         ),
     ])

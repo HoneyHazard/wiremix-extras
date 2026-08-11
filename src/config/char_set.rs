@@ -33,6 +33,9 @@ pub struct CharSetOverlay {
     meter_center_left_active: Option<String>,
     meter_center_right_inactive: Option<String>,
     meter_center_right_active: Option<String>,
+    meter_channel_inactive: Option<String>,
+    meter_channel_active: Option<String>,
+    meter_channel_overload: Option<String>,
     dropdown_icon: Option<String>,
     dropdown_selector: Option<String>,
     dropdown_more: Option<String>,
@@ -115,6 +118,9 @@ impl TryFrom<CharSetOverlay> for CharSet {
         validate_and_set!(meter_center_left_active, 1);
         validate_and_set!(meter_center_right_inactive, 1);
         validate_and_set!(meter_center_right_active, 1);
+        validate_and_set!(meter_channel_inactive, 1);
+        validate_and_set!(meter_channel_active, 1);
+        validate_and_set!(meter_channel_overload, 1);
         validate_and_set!(dropdown_icon, 1);
         validate_and_set!(dropdown_selector, 1);
         validate_and_set!(dropdown_more, 0);
@@ -155,6 +161,13 @@ impl Default for CharSet {
             meter_center_left_active: String::from("▮"),
             meter_center_right_inactive: String::from("▮"),
             meter_center_right_active: String::from("▮"),
+            // A shorter, vertically-centered rectangle rather than
+            // meter_right's full-height "▮" - stacked channel-row meters
+            // then leave visible top/bottom gaps instead of forming one
+            // solid block when several sit directly above one another.
+            meter_channel_inactive: String::from("▬"),
+            meter_channel_active: String::from("▬"),
+            meter_channel_overload: String::from("▬"),
             dropdown_icon: String::from("▼"),
             dropdown_selector: String::from(">"),
             dropdown_more: String::from("•••"),
@@ -196,6 +209,13 @@ impl CharSet {
             meter_center_left_active: String::from("█"),
             meter_center_right_inactive: String::from("█"),
             meter_center_right_active: String::from("█"),
+            // A plain horizontal rule instead of meter_right's "┃" -
+            // reads as a distinctly thinner line so stacked channel-row
+            // meters don't blend into each other the way repeated full
+            // vertical strokes would.
+            meter_channel_inactive: String::from("─"),
+            meter_channel_active: String::from("─"),
+            meter_channel_overload: String::from("─"),
             dropdown_icon: String::from("▼"),
             dropdown_selector: String::from(">"),
             dropdown_more: String::from("•••"),
@@ -227,6 +247,12 @@ impl CharSet {
             meter_center_left_active: String::from("["),
             meter_center_right_inactive: String::from("]"),
             meter_center_right_active: String::from("]"),
+            // Distinct ASCII from meter_right's "=" / "#" / "!", so
+            // stacked channel-row meters read as visually different from
+            // a whole-node meter, not just a repeat of it.
+            meter_channel_inactive: String::from("-"),
+            meter_channel_active: String::from("+"),
+            meter_channel_overload: String::from("^"),
             dropdown_icon: String::from("\\"),
             dropdown_selector: String::from(">"),
             dropdown_more: String::from("~~~"),
