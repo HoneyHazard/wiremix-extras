@@ -14,7 +14,9 @@ use smallvec::smallvec;
 
 use crate::app::{Action, MouseArea};
 use crate::channel_pairing::{self, ChannelGroup};
-use crate::config::{Config, Peaks};
+use crate::config::{
+    ChannelDisplay, ChannelState, Config, Peaks, SplitStyle, UnifiedImbalance,
+};
 use crate::device_kind::DeviceKind;
 use crate::meter;
 use crate::object_list::ObjectList;
@@ -28,16 +30,84 @@ fn is_default(node: &view::Node, device_kind: Option<DeviceKind>) -> bool {
     }
 }
 
+/// Whether `node`'s own channels currently all hold the same value.
+/// `false` for a node with 0 or 1 channels - nothing to be imbalanced
+/// between.
+fn is_imbalanced(node: &view::Node) -> bool {
+    let mut volumes = node.volumes.iter();
+    let Some(&first) = volumes.next() else {
+        return false;
+    };
+    volumes.any(|&volume| volume != first)
+}
+
+/// What `NodeWidget` should actually show for a node's volume, resolved
+/// from the current channel state and the node's own data. See
+/// `NOTES-multichannel.md` §9's config-restructuring writeup for the
+/// full reasoning behind this precedence.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum VolumeDisplay {
+    /// One combined bar/row - today's stock behavior.
+    Unified,
+    /// Two bars sharing one row, radiating from a shared center marker.
+    /// Only ever chosen for a detected 2-channel left/right pair.
+    Radiating {
+        left_index: usize,
+        right_index: usize,
+    },
+    /// One row per channel.
+    Stacked,
+}
+
+fn volume_display(
+    channel_state: ChannelState,
+    node: &view::Node,
+) -> VolumeDisplay {
+    if node.volumes.len() <= 1 {
+        return VolumeDisplay::Unified;
+    }
+
+    // Channel mode (individual setting) always wins over the display
+    // axis: always stacked, regardless of channel_display/split_style -
+    // radiating's marker-placement problem for an individually-cursored
+    // channel isn't solved yet (see NOTES-multichannel.md §5/§7.5).
+    if channel_state.channel_mode {
+        return VolumeDisplay::Stacked;
+    }
+
+    let wants_split = match channel_state.channel_display {
+        ChannelDisplay::Always => true,
+        ChannelDisplay::Unified => {
+            is_imbalanced(node)
+                && channel_state.unified_imbalance == UnifiedImbalance::Split
+        }
+    };
+
+    if !wants_split {
+        return VolumeDisplay::Unified;
+    }
+
+    match channel_state.split_style {
+        SplitStyle::Stacked => VolumeDisplay::Stacked,
+        SplitStyle::Radiating => match stereo_pair(node) {
+            Some((left_index, right_index)) => VolumeDisplay::Radiating {
+                left_index,
+                right_index,
+            },
+            // Not a detected pair (odd channel count, or channels with
+            // no left/right naming) - nothing for radiating to grow
+            // from center, fall back to stacked.
+            None => VolumeDisplay::Stacked,
+        },
+    }
+}
+
 pub struct NodeWidget<'a> {
     config: &'a Config,
     device_kind: Option<DeviceKind>,
     node: &'a view::Node,
     selected: bool,
-    /// Whether keyboard navigation/volume keys are targeting individual
-    /// channels ("Channel mode" - see the multichannel design notes,
-    /// §7.3/§7.4). Session-wide, so it affects how every node in the list
-    /// renders, not just the selected one.
-    channel_mode: bool,
+    channel_state: ChannelState,
     /// Which channel of *this* node is cursor-targeted, if any. Only
     /// meaningful when `selected` is also true - another node's channel
     /// index has no bearing on this one's marker.
@@ -50,7 +120,7 @@ impl<'a> NodeWidget<'a> {
         device_kind: Option<DeviceKind>,
         node: &'a view::Node,
         selected: bool,
-        channel_mode: bool,
+        channel_state: ChannelState,
         selected_channel: Option<usize>,
     ) -> Self {
         Self {
@@ -58,27 +128,25 @@ impl<'a> NodeWidget<'a> {
             device_kind,
             node,
             selected,
-            channel_mode,
+            channel_state,
             selected_channel,
         }
     }
 
-    /// Height of a full node display in the default (non-Channel-mode)
-    /// layout.
+    /// Height of a full node display in the default (unified/radiating)
+    /// layout - both fit in the same fixed height.
     pub fn height() -> u16 {
         3
     }
 
-    /// Height of `node`'s display given the current channel mode -
-    /// channel mode expands a node with more than one channel into one
+    /// Height of `node`'s display given the current channel state -
+    /// stacked display expands a node with more than one channel into one
     /// header line plus one line per channel; everything else renders at
     /// the ordinary fixed `height()`.
-    pub fn node_height(channel_mode: bool, node: &view::Node) -> u16 {
-        let channel_count = node.volumes.len();
-        if channel_mode && channel_count > 1 {
-            1 + channel_count as u16
-        } else {
-            Self::height()
+    pub fn node_height(channel_state: ChannelState, node: &view::Node) -> u16 {
+        match volume_display(channel_state, node) {
+            VolumeDisplay::Stacked => 1 + node.volumes.len() as u16,
+            _ => Self::height(),
         }
     }
 
@@ -214,9 +282,14 @@ impl StatefulWidget for NodeWidget<'_> {
             ),
         ]);
 
-        let channel_count = self.node.volumes.len();
-        if self.channel_mode && channel_count > 1 {
-            self.render_channel_rows(area, buf, mouse_areas, channel_count);
+        let display = volume_display(self.channel_state, self.node);
+        if display == VolumeDisplay::Stacked {
+            self.render_channel_rows(
+                area,
+                buf,
+                mouse_areas,
+                self.node.volumes.len(),
+            );
             return;
         }
 
@@ -271,6 +344,7 @@ impl StatefulWidget for NodeWidget<'_> {
             render_volume(
                 self.config,
                 self.node,
+                display,
                 volume_area,
                 buf,
                 mouse_areas,
@@ -294,6 +368,7 @@ impl StatefulWidget for NodeWidget<'_> {
             render_volume(
                 self.config,
                 self.node,
+                display,
                 volume_area,
                 buf,
                 mouse_areas,
@@ -463,11 +538,11 @@ impl StatefulWidget for HeaderWidget<'_> {
     }
 }
 
-/// The first detected left/right channel pair on `node`, if
-/// `show_channel_volumes` display should render one for it. `None` if the
-/// node has no `positions` data at all, or none of its channels pair (see
-/// `channel_pairing`) - callers fall back to the ordinary single-bar
-/// `VolumeWidget` in that case.
+/// The first detected left/right channel pair on `node`, for a radiating
+/// display to render. `None` if the node has no `positions` data at all,
+/// or none of its channels pair (see `channel_pairing`) - callers fall
+/// back to stacked (or the ordinary single-bar `VolumeWidget`) in that
+/// case.
 fn stereo_pair(node: &view::Node) -> Option<(usize, usize)> {
     let positions = node.positions.as_ref()?;
     channel_pairing::group_channels(positions)
@@ -478,24 +553,30 @@ fn stereo_pair(node: &view::Node) -> Option<(usize, usize)> {
         })
 }
 
+/// Renders a node's volume within a single-row area - the resolved
+/// `display` must be `Unified` or `Radiating`; `Stacked` is handled
+/// earlier in `NodeWidget::render()`, via `render_channel_rows`, since it
+/// needs a taller multi-row area this function doesn't have.
 fn render_volume(
     config: &Config,
     node: &view::Node,
+    display: VolumeDisplay,
     area: Rect,
     buf: &mut Buffer,
     mouse_areas: &mut Vec<MouseArea>,
 ) {
-    if config.show_channel_volumes {
-        if let Some((left, right)) = stereo_pair(node) {
-            StereoVolumeWidget::new(config, node, left, right).render(
-                area,
-                buf,
-                mouse_areas,
-            );
-            return;
+    match display {
+        VolumeDisplay::Radiating {
+            left_index,
+            right_index,
+        } => {
+            StereoVolumeWidget::new(config, node, left_index, right_index)
+                .render(area, buf, mouse_areas);
+        }
+        VolumeDisplay::Unified | VolumeDisplay::Stacked => {
+            VolumeWidget::new(config, node).render(area, buf, mouse_areas);
         }
     }
-    VolumeWidget::new(config, node).render(area, buf, mouse_areas);
 }
 
 struct VolumeWidget<'a> {
@@ -1035,7 +1116,14 @@ mod tests {
     fn render_to_string(config: &Config, node: &view::Node) -> String {
         let area = Rect::new(0, 0, 40, 1);
         let mut buf = Buffer::empty(area);
-        render_volume(config, node, area, &mut buf, &mut Vec::new());
+        let channel_state = ChannelState {
+            channel_mode: false,
+            channel_display: config.channel_display,
+            unified_imbalance: config.unified_imbalance,
+            split_style: config.split_style,
+        };
+        let display = volume_display(channel_state, node);
+        render_volume(config, node, display, area, &mut buf, &mut Vec::new());
         let mut line = String::new();
         for x in 0..area.width {
             line.push_str(buf.cell((x, 0)).map(|c| c.symbol()).unwrap_or(" "));
@@ -1054,7 +1142,13 @@ mod tests {
         selected: bool,
         selected_channel: Option<usize>,
     ) -> Vec<String> {
-        let height = NodeWidget::node_height(channel_mode, node);
+        let channel_state = ChannelState {
+            channel_mode,
+            channel_display: config.channel_display,
+            unified_imbalance: config.unified_imbalance,
+            split_style: config.split_style,
+        };
+        let height = NodeWidget::node_height(channel_state, node);
         let area = Rect::new(0, 0, 40, height);
         let mut buf = Buffer::empty(area);
         NodeWidget::new(
@@ -1062,7 +1156,7 @@ mod tests {
             None,
             node,
             selected,
-            channel_mode,
+            channel_state,
             selected_channel,
         )
         .render(area, &mut buf, &mut Vec::new());
@@ -1089,7 +1183,7 @@ mod tests {
             vec![0.5_f32.powi(3), 0.5_f32.powi(3)],
         );
         let config =
-            config::Config::from_toml_str("show_channel_volumes = true");
+            config::Config::from_toml_str("channel_display = \"always\"");
 
         // render_to_string uses a 40-wide area - the remaining bar space
         // after fixed segments (40 - 13 = 27) is odd, exactly the case
@@ -1129,7 +1223,7 @@ mod tests {
     }
 
     #[test]
-    fn show_channel_volumes_off_renders_single_averaged_bar() {
+    fn channel_display_unified_renders_single_averaged_bar() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         // Left at 100%, right at 0% (raw linear volumes, i.e. the cubes of
@@ -1150,12 +1244,12 @@ mod tests {
     }
 
     #[test]
-    fn show_channel_volumes_on_renders_independent_percentages() {
+    fn channel_display_always_renders_independent_percentages() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
         let config =
-            config::Config::from_toml_str("show_channel_volumes = true");
+            config::Config::from_toml_str("channel_display = \"always\"");
 
         let rendered = render_to_string(&config, &node);
 
@@ -1167,36 +1261,166 @@ mod tests {
     }
 
     #[test]
-    fn show_channel_volumes_on_without_a_pair_falls_back_to_single_bar() {
-        // Mono - nothing to pair, so this must render exactly like the
-        // option was off, even though it's enabled.
+    fn channel_display_always_without_a_pair_falls_back_to_single_bar() {
+        // Mono - nothing to pair, so this must render exactly like
+        // channel_display was left "unified", even though it's "always".
         let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
         let node = test_node(Some(vec![mono]), vec![0.5_f32.powi(3)]);
         let config =
-            config::Config::from_toml_str("show_channel_volumes = true");
+            config::Config::from_toml_str("channel_display = \"always\"");
 
         let rendered = render_to_string(&config, &node);
 
         assert!(rendered.contains("50%"));
     }
 
+    fn channel_state(channel_mode: bool) -> ChannelState {
+        ChannelState {
+            channel_mode,
+            channel_display: Default::default(),
+            unified_imbalance: Default::default(),
+            split_style: Default::default(),
+        }
+    }
+
+    #[test]
+    fn volume_display_defaults_to_unified() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]);
+        assert_eq!(
+            volume_display(channel_state(false), &node),
+            VolumeDisplay::Unified
+        );
+    }
+
+    #[test]
+    fn volume_display_channel_mode_always_wins() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
+        let mut state = channel_state(true);
+        state.channel_display = ChannelDisplay::Always;
+        state.split_style = SplitStyle::Radiating;
+        // Even with a detected pair and split_style = radiating,
+        // channel_mode forces Stacked.
+        assert_eq!(volume_display(state, &node), VolumeDisplay::Stacked);
+    }
+
+    #[test]
+    fn volume_display_always_radiates_for_a_detected_pair() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Always;
+        state.split_style = SplitStyle::Radiating;
+        assert_eq!(
+            volume_display(state, &node),
+            VolumeDisplay::Radiating {
+                left_index: 0,
+                right_index: 1
+            }
+        );
+    }
+
+    #[test]
+    fn volume_display_always_falls_back_to_stacked_without_a_pair() {
+        let aux0 = libspa_sys::SPA_AUDIO_CHANNEL_AUX0;
+        let aux1 = libspa_sys::SPA_AUDIO_CHANNEL_AUX1;
+        let node = test_node(Some(vec![aux0, aux1]), vec![0.5, 0.5]);
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Always;
+        state.split_style = SplitStyle::Radiating;
+        // AUX0/AUX1 never pair, so radiating has nothing to grow from
+        // center - falls back to stacked even though split_style asked
+        // for radiating.
+        assert_eq!(volume_display(state, &node), VolumeDisplay::Stacked);
+    }
+
+    #[test]
+    fn volume_display_always_stacked_when_configured() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Always;
+        state.split_style = SplitStyle::Stacked;
+        assert_eq!(volume_display(state, &node), VolumeDisplay::Stacked);
+    }
+
+    #[test]
+    fn volume_display_unified_imbalance_none_stays_unified() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]);
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Unified;
+        state.unified_imbalance = UnifiedImbalance::None;
+        assert_eq!(volume_display(state, &node), VolumeDisplay::Unified);
+    }
+
+    #[test]
+    fn volume_display_unified_imbalance_split_only_splits_when_imbalanced() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Unified;
+        state.unified_imbalance = UnifiedImbalance::Split;
+        state.split_style = SplitStyle::Radiating;
+
+        let balanced = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
+        assert_eq!(
+            volume_display(state, &balanced),
+            VolumeDisplay::Unified,
+            "balanced node should stay collapsed"
+        );
+
+        let imbalanced = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]);
+        assert_eq!(
+            volume_display(state, &imbalanced),
+            VolumeDisplay::Radiating {
+                left_index: 0,
+                right_index: 1
+            },
+            "imbalanced node should split"
+        );
+    }
+
+    #[test]
+    fn volume_display_single_channel_always_unified() {
+        let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
+        let node = test_node(Some(vec![mono]), vec![0.5]);
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Always;
+        // Nothing to split - a single channel is unified regardless of
+        // every other axis.
+        assert_eq!(volume_display(state, &node), VolumeDisplay::Unified);
+    }
+
     #[test]
     fn node_height_default_is_unaffected_by_channel_count() {
         let node = test_node(None, vec![1.0, 1.0, 1.0]);
-        assert_eq!(NodeWidget::node_height(false, &node), NodeWidget::height());
+        assert_eq!(
+            NodeWidget::node_height(channel_state(false), &node),
+            NodeWidget::height()
+        );
     }
 
     #[test]
     fn node_height_channel_mode_expands_one_line_per_channel() {
         let node = test_node(None, vec![1.0, 1.0, 1.0]);
         // 1 header line + 3 channel lines
-        assert_eq!(NodeWidget::node_height(true, &node), 4);
+        assert_eq!(NodeWidget::node_height(channel_state(true), &node), 4);
     }
 
     #[test]
     fn node_height_channel_mode_single_channel_unaffected() {
         let node = test_node(None, vec![1.0]);
-        assert_eq!(NodeWidget::node_height(true, &node), NodeWidget::height());
+        assert_eq!(
+            NodeWidget::node_height(channel_state(true), &node),
+            NodeWidget::height()
+        );
     }
 
     #[test]
@@ -1275,7 +1499,7 @@ mod tests {
         let lines = render_node_lines(&config, &node, false, true, Some(1));
 
         assert_eq!(lines.len(), 3);
-        assert_eq!(NodeWidget::node_height(false, &node), 3);
+        assert_eq!(NodeWidget::node_height(channel_state(false), &node), 3);
     }
 
     #[test]

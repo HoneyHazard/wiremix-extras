@@ -73,6 +73,10 @@ pub enum Action {
     /// node together, or step through and adjust its channels one at a
     /// time. See the multichannel design notes, §7.3/§7.4.
     ToggleChannelMode,
+    /// Cycles `channel_display` between "unified" (one bar/row per node)
+    /// and "always" (always split, per `split_style`). Independent of
+    /// `ToggleChannelMode`, which controls *setting*, not display.
+    CycleChannelDisplay,
     #[serde(skip_deserializing)]
     SelectObject(ObjectId),
     /// Moves the channel-mode cursor to a specific channel index, without
@@ -124,6 +128,9 @@ impl std::fmt::Display for Action {
                 Self::format_channel_relative_volume(f, *channel, *vol)
             }
             Action::ToggleChannelMode => write!(f, "Toggle channel mode"),
+            Action::CycleChannelDisplay => {
+                write!(f, "Cycle channel display")
+            }
             Action::SetDefault => write!(f, "Set default"),
             Action::Help => write!(f, "Show/hide help"),
             Action::Exit => write!(f, "Exit wiremix"),
@@ -290,7 +297,14 @@ impl<'a> App<'a> {
         rx: mpsc::Receiver<Event>,
         config: Config,
     ) -> Self {
-        let tabs = config.tabs.iter().copied().map(Tab::from).collect();
+        let mut tabs: Vec<Tab> =
+            config.tabs.iter().copied().map(Tab::from).collect();
+        for tab in &mut tabs {
+            tab.list.channel_mode = config.channel_mode;
+            tab.list.channel_display = config.channel_display;
+            tab.list.unified_imbalance = config.unified_imbalance;
+            tab.list.split_style = config.split_style;
+        }
 
         // Update peaks with VU-meter-style ballistics
         let peak_processor = |new_peak, current_peak, samples, rate| {
@@ -679,6 +693,9 @@ impl Handle for Action {
             Action::ToggleChannelMode => {
                 current_list!(app).toggle_channel_mode(&app.view);
             }
+            Action::CycleChannelDisplay => {
+                current_list!(app).cycle_channel_display();
+            }
             Action::SetAbsoluteVolume(volume) => {
                 let max = app
                     .config
@@ -979,7 +996,10 @@ mod tests {
             tab: 0,
             tabs: vec![TabKind::Playback],
             lazy_capture: Default::default(),
-            show_channel_volumes: Default::default(),
+            channel_display: Default::default(),
+            unified_imbalance: Default::default(),
+            split_style: Default::default(),
+            channel_mode: Default::default(),
             filters: Default::default(),
         };
 
@@ -1081,7 +1101,10 @@ mod tests {
                 TabKind::Configuration,
             ],
             lazy_capture: Default::default(),
-            show_channel_volumes: Default::default(),
+            channel_display: Default::default(),
+            unified_imbalance: Default::default(),
+            split_style: Default::default(),
+            channel_mode: Default::default(),
             filters: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);

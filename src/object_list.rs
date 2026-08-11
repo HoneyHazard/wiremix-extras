@@ -13,7 +13,9 @@ use crossterm::event::{MouseButton, MouseEventKind};
 use smallvec::smallvec;
 
 use crate::app::{Action, MouseArea};
-use crate::config::Config;
+use crate::config::{
+    ChannelDisplay, ChannelState, Config, SplitStyle, UnifiedImbalance,
+};
 use crate::device_kind::DeviceKind;
 use crate::device_widget::DeviceWidget;
 use crate::dropdown_widget::DropdownWidget;
@@ -48,6 +50,17 @@ pub struct ObjectList {
     /// or the selected object has fewer than two channels to cycle
     /// through (nothing to individually target).
     pub selected_channel: Option<usize>,
+    /// Whether a node's volume is ever shown as more than one bar/row
+    /// when `channel_mode` is off (linked setting). Seeded from
+    /// `Config::channel_display` at startup; toggled live via
+    /// `Action::CycleChannelDisplay`.
+    pub channel_display: ChannelDisplay,
+    /// See `Config::unified_imbalance`. Seeded from config; no runtime
+    /// toggle yet.
+    pub unified_imbalance: UnifiedImbalance,
+    /// See `Config::split_style`. Seeded from config; no runtime toggle
+    /// yet.
+    pub split_style: SplitStyle,
 }
 
 impl ObjectList {
@@ -115,6 +128,26 @@ impl ObjectList {
         self.channel_mode = !self.channel_mode;
         self.selected_channel =
             self.initial_channel(view, self.selected, false);
+    }
+
+    /// Cycles the display axis between showing a node's volume as one
+    /// combined bar/row ("unified") and always splitting it ("always") -
+    /// see `Config::channel_display`. Independent of `channel_mode`.
+    pub fn cycle_channel_display(&mut self) {
+        self.channel_display = match self.channel_display {
+            ChannelDisplay::Unified => ChannelDisplay::Always,
+            ChannelDisplay::Always => ChannelDisplay::Unified,
+        };
+    }
+
+    /// Bundles the four display/setting axes for passing to `NodeWidget`.
+    pub fn channel_state(&self) -> ChannelState {
+        ChannelState {
+            channel_mode: self.channel_mode,
+            channel_display: self.channel_display,
+            unified_imbalance: self.unified_imbalance,
+            split_style: self.split_style,
+        }
     }
 
     /// Number of channels the given object has to cycle through in channel
@@ -390,16 +423,18 @@ impl ObjectList {
     }
 
     /// Raw (spacing-excluded) height of every object visible from `top`
-    /// onward, in list order. Node heights vary with `channel_mode` and
-    /// each node's own channel count (see `NodeWidget::node_height`);
-    /// device heights are always uniform.
+    /// onward, in list order. Node heights vary with the current channel
+    /// display/setting state and each node's own channel count/values
+    /// (see `NodeWidget::node_height`); device heights are always
+    /// uniform.
     fn item_heights(&self, view: &view::View) -> Vec<u16> {
+        let channel_state = self.channel_state();
         match self.list_kind {
             ListKind::Node(node_kind) => view
                 .full_nodes(node_kind)
                 .iter()
                 .skip(self.top)
-                .map(|node| NodeWidget::node_height(self.channel_mode, node))
+                .map(|node| NodeWidget::node_height(channel_state, node))
                 .collect(),
             ListKind::Device => {
                 let count = view.full_devices().len().saturating_sub(self.top);
@@ -507,7 +542,7 @@ impl ObjectListWidget<'_, '_> {
                 self.object_list.device_kind,
                 object,
                 selected,
-                self.object_list.channel_mode,
+                self.object_list.channel_state(),
                 self.object_list.selected_channel,
             )
             .render(object_area, buf, mouse_areas);

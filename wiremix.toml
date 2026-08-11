@@ -44,14 +44,51 @@ enforce_max_volume = false
 # If true, only monitor peak levels of visible nodes
 lazy_capture = false
 
-# If true, a node with a detected stereo (or other named left/right)
-# channel pair shows two independent radiating volume bars - one per
-# channel, growing outward from a shared center marker - instead of one
-# bar averaging all channels together. Nodes without a detected pair (no
-# channel position data, a single channel, or channels with no left/right
-# counterpart) are unaffected either way. False by default, matching
-# every node's current single-bar display exactly.
-show_channel_volumes = false
+# Whether a node's volume is ever shown as more than one bar/row when its
+# setting is linked/ganged (see channel_mode below for the individual
+# setting axis, which is independent of this):
+# "unified" - always exactly one bar/row (today's default). See
+#   unified_imbalance below for how a node whose channels currently hold
+#   different values is indicated while collapsed like this.
+# "always" - always split (see split_style), never collapses to one
+#   bar/row.
+# Toggle live with the "ToggleChannelDisplay" action (unbound by
+# default) - cycles unified -> always -> unified.
+channel_display = "unified"
+
+# Only consulted when channel_display = "unified" - how a node whose
+# channels currently hold different values is indicated without actually
+# switching the whole session to "always":
+# "none" - no indication, just the mean (today's default, and the only
+#   behavior stock wiremix has ever had).
+# "cycle" - stay collapsed to one bar/row, but temporally cycle the
+#   label+percentage through each channel in turn while they differ.
+# "split" - just that one imbalanced node renders split (see
+#   split_style) while every other, balanced node stays collapsed to one
+#   bar/row.
+unified_imbalance = "none"
+
+# Rendering style whenever a node's volume actually is split
+# (channel_display = "always", unified_imbalance = "split" triggering for
+# a currently-imbalanced node, or channel_mode = true - see below):
+# "radiating" - two bars sharing one row, growing outward from a shared
+#   center marker. Only ever used for a detected stereo (or other named
+#   left/right) channel pair.
+# "stacked" - one row per channel. Used for anything that isn't a
+#   detected pair (an odd channel count, or channels with no left/right
+#   naming) regardless of this setting, since radiating has nothing to
+#   grow from center for those.
+split_style = "radiating"
+
+# Whether volume keys (h/l, Left/Right, 0-9, etc.) adjust every channel
+# of the selected item together (false, linked/ganged - today's default)
+# or only the individually-cursored channel (true, "Channel mode").
+# Independent of channel_display/unified_imbalance/split_style, which
+# control *display*, not which channels an adjustment affects - though
+# channel_mode = true always renders split (stacked), regardless of
+# those settings. Toggle live with the "ToggleChannelMode" action
+# (unbound by default).
+channel_mode = false
 
 
 # Keybindings
@@ -130,7 +167,7 @@ keybindings = [
  { key = { Char = "0" }, action = { SetAbsoluteVolume = 1.00 } },
  # Open the help menu
  { key = { Char = "?" }, action = "Help" },
- # There are five actions which don't have default bindings:
+ # There are six actions which don't have default bindings:
  # 1. "Nothing": Do nothing - can effectively delete a default keybinding
  # 2. { SelectTab = N }: Open the Nth tab
  # 3. { SetChannelAbsoluteVolume = [N, volume] }: Set the volume of just
@@ -144,10 +181,12 @@ keybindings = [
  #    time before moving to the next item, and the ordinary volume keys
  #    (h/l, Left/Right, 0-9, etc.) adjust only the currently-cursored
  #    channel instead of every channel together
+ # 6. "CycleChannelDisplay": Cycle channel_display between "unified" and
+ #    "always" - see the Main Options section above
  #
  # For example, to control the two channels of a stereo pair
  # independently with Ctrl+Left/Right (channel 0) and Ctrl+Up/Down
- # (channel 1) - useful alongside show_channel_volumes = true above, or
+ # (channel 1) - useful alongside channel_display = "always" above, or
  # with "ToggleChannelMode" bound to a key of your choice:
  #
  # { key = "Left", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [0, -0.01] } },
@@ -155,6 +194,7 @@ keybindings = [
  # { key = "Up", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [1, 0.01] } },
  # { key = "Down", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [1, -0.01] } },
  # { key = { Char = " " }, action = "ToggleChannelMode" },
+ # { key = { Char = "v" }, action = "CycleChannelDisplay" },
  #
  # Ctrl+arrow keys aren't guaranteed to reach wiremix on every terminal -
  # some terminal emulators and multiplexers (tmux, screen) intercept them

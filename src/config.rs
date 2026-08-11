@@ -44,7 +44,28 @@ pub struct Config {
     pub tab: usize,
     pub tabs: Vec<TabKind>,
     pub lazy_capture: bool,
-    pub show_channel_volumes: bool,
+    /// Whether a node's volume is ever shown as more than one bar/row when
+    /// its setting is linked (ganged) - "unified" (always one) or
+    /// "always" (always split, per `split_style`). See `unified_imbalance`
+    /// for how an imbalanced node is indicated while this is "unified".
+    /// Independent of `channel_mode`, which always forces a split,
+    /// individually-cursored display regardless of this setting.
+    pub channel_display: ChannelDisplay,
+    /// Only consulted when `channel_display` is "unified": how an
+    /// imbalanced node (channels that don't all hold the same value) is
+    /// indicated without actually splitting the whole list's display.
+    pub unified_imbalance: UnifiedImbalance,
+    /// Rendering style whenever a node's volume actually is split
+    /// (`channel_display = "always"`, `unified_imbalance = "split"`
+    /// triggering for one imbalanced node, or `channel_mode` being on).
+    /// "radiating" only applies to a detected 2-channel left/right pair;
+    /// anything else always renders "stacked" regardless of this setting.
+    pub split_style: SplitStyle,
+    /// Initial value of the "Channel mode" setting axis (linked vs
+    /// individual - see `Action::ToggleChannelMode`). Independent of
+    /// `channel_display`/`unified_imbalance`/`split_style`, which
+    /// control *display*, not which channels an adjustment affects.
+    pub channel_mode: bool,
     pub filters: Vec<MatchCondition>,
 }
 
@@ -89,8 +110,14 @@ struct ConfigFile {
     tabs: Vec<TabKind>,
     #[serde(default = "default_lazy_capture")]
     lazy_capture: bool,
-    #[serde(default = "default_show_channel_volumes")]
-    show_channel_volumes: bool,
+    #[serde(default = "default_channel_display")]
+    channel_display: Option<ChannelDisplay>,
+    #[serde(default = "default_unified_imbalance")]
+    unified_imbalance: Option<UnifiedImbalance>,
+    #[serde(default = "default_split_style")]
+    split_style: Option<SplitStyle>,
+    #[serde(default = "default_channel_mode")]
+    channel_mode: bool,
     #[serde(default = "Filter::defaults", deserialize_with = "Filter::merge")]
     filters: Vec<Filter>,
 }
@@ -102,6 +129,52 @@ pub enum Peaks {
     Mono,
     #[default]
     Auto,
+}
+
+#[derive(
+    Deserialize, Default, Debug, Clone, Copy, PartialEq, clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChannelDisplay {
+    #[default]
+    Unified,
+    Always,
+}
+
+#[derive(
+    Deserialize, Default, Debug, Clone, Copy, PartialEq, clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum UnifiedImbalance {
+    #[default]
+    None,
+    Cycle,
+    Split,
+}
+
+#[derive(
+    Deserialize, Default, Debug, Clone, Copy, PartialEq, clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum SplitStyle {
+    #[default]
+    Radiating,
+    Stacked,
+}
+
+/// Bundles the four independent axes that decide how a node's volume is
+/// displayed/set, so functions that need all of them (mainly
+/// `NodeWidget`/its height calculation) don't need four separate
+/// parameters. `channel_mode` and `channel_display` are runtime-mutable
+/// (see `ObjectList`); `unified_imbalance`/`split_style` currently aren't
+/// (no toggle action yet - config-only), but live here alongside the
+/// others so adding one later doesn't change this bundle's shape.
+#[derive(Debug, Clone, Copy)]
+pub struct ChannelState {
+    pub channel_mode: bool,
+    pub channel_display: ChannelDisplay,
+    pub unified_imbalance: UnifiedImbalance,
+    pub split_style: SplitStyle,
 }
 
 #[derive(Deserialize, Debug)]
@@ -273,7 +346,19 @@ fn default_lazy_capture() -> bool {
     false
 }
 
-fn default_show_channel_volumes() -> bool {
+fn default_channel_display() -> Option<ChannelDisplay> {
+    Some(ChannelDisplay::default())
+}
+
+fn default_unified_imbalance() -> Option<UnifiedImbalance> {
+    Some(UnifiedImbalance::default())
+}
+
+fn default_split_style() -> Option<SplitStyle> {
+    Some(SplitStyle::default())
+}
+
+fn default_channel_mode() -> bool {
     false
 }
 
@@ -336,12 +421,24 @@ impl ConfigFile {
             self.lazy_capture = true;
         }
 
-        if opt.no_show_channel_volumes {
-            self.show_channel_volumes = false;
+        if let Some(channel_display) = &opt.channel_display {
+            self.channel_display = Some(*channel_display);
         }
 
-        if opt.show_channel_volumes {
-            self.show_channel_volumes = true;
+        if let Some(unified_imbalance) = &opt.unified_imbalance {
+            self.unified_imbalance = Some(*unified_imbalance);
+        }
+
+        if let Some(split_style) = &opt.split_style {
+            self.split_style = Some(*split_style);
+        }
+
+        if opt.no_channel_mode {
+            self.channel_mode = false;
+        }
+
+        if opt.channel_mode {
+            self.channel_mode = true;
         }
     }
 }
@@ -411,7 +508,12 @@ impl TryFrom<ConfigFile> for Config {
             tab,
             tabs: config_file.tabs,
             lazy_capture: config_file.lazy_capture,
-            show_channel_volumes: config_file.show_channel_volumes,
+            channel_display: config_file.channel_display.unwrap_or_default(),
+            unified_imbalance: config_file
+                .unified_imbalance
+                .unwrap_or_default(),
+            split_style: config_file.split_style.unwrap_or_default(),
+            channel_mode: config_file.channel_mode,
             filters,
         })
     }
@@ -497,7 +599,10 @@ pub mod strict {
         tab: Option<TabKind>,
         tabs: Vec<TabKind>,
         lazy_capture: bool,
-        show_channel_volumes: bool,
+        channel_display: Option<ChannelDisplay>,
+        unified_imbalance: Option<UnifiedImbalance>,
+        split_style: Option<SplitStyle>,
+        channel_mode: bool,
         filters: Vec<Filter>,
     }
 
@@ -519,7 +624,10 @@ pub mod strict {
                 tab: strict.tab,
                 tabs: strict.tabs,
                 lazy_capture: strict.lazy_capture,
-                show_channel_volumes: strict.show_channel_volumes,
+                channel_display: strict.channel_display,
+                unified_imbalance: strict.unified_imbalance,
+                split_style: strict.split_style,
+                channel_mode: strict.channel_mode,
                 filters: strict.filters,
             }
         }
@@ -631,6 +739,43 @@ mod tests {
         "#;
         let keybinding: Keybinding = toml::from_str(config).unwrap();
         assert_eq!(keybinding.action, Action::ToggleChannelMode);
+    }
+
+    #[test]
+    fn keybinding_cycle_channel_display() {
+        let config = r#"
+        key = { Char = "v" }
+        action = "CycleChannelDisplay"
+        "#;
+        let keybinding: Keybinding = toml::from_str(config).unwrap();
+        assert_eq!(keybinding.action, Action::CycleChannelDisplay);
+    }
+
+    #[test]
+    fn channel_display_parses_from_toml() {
+        let config: ConfigFile =
+            toml::from_str("channel_display = \"always\"").unwrap();
+        assert_eq!(config.channel_display, Some(ChannelDisplay::Always));
+    }
+
+    #[test]
+    fn unified_imbalance_parses_from_toml() {
+        let config: ConfigFile =
+            toml::from_str("unified_imbalance = \"cycle\"").unwrap();
+        assert_eq!(config.unified_imbalance, Some(UnifiedImbalance::Cycle));
+    }
+
+    #[test]
+    fn split_style_parses_from_toml() {
+        let config: ConfigFile =
+            toml::from_str("split_style = \"stacked\"").unwrap();
+        assert_eq!(config.split_style, Some(SplitStyle::Stacked));
+    }
+
+    #[test]
+    fn channel_mode_parses_from_toml() {
+        let config: ConfigFile = toml::from_str("channel_mode = true").unwrap();
+        assert!(config.channel_mode);
     }
 
     #[test]
