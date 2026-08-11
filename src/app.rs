@@ -283,6 +283,11 @@ pub struct App<'a> {
     capturable_objects: HashSet<ObjectId>,
     /// Objects currently being captured.
     capturing_objects: HashSet<ObjectId>,
+    /// Fixed reference point for `unified_imbalance = "cycle"`'s
+    /// stateless phase-offset timing (`NOTES-multichannel.md` §7.2/§10) -
+    /// elapsed time since this is recomputed fresh every render, nothing
+    /// else is stored per-node.
+    start_time: Instant,
 }
 
 macro_rules! current_list {
@@ -337,6 +342,7 @@ impl<'a> App<'a> {
             peak_processor: Arc::new(peak_processor),
             capturable_objects: HashSet::new(),
             capturing_objects: HashSet::new(),
+            start_time: Instant::now(),
         }
     }
 
@@ -402,6 +408,7 @@ impl<'a> App<'a> {
             current_tab_index: self.current_tab_index,
             view: &self.view,
             config: &self.config,
+            elapsed_seconds: self.start_time.elapsed().as_secs_f32(),
         };
         let mut widget_state = AppWidgetState {
             mouse_areas: &mut self.mouse_areas,
@@ -847,6 +854,7 @@ pub struct AppWidget<'a, 'b> {
     current_tab_index: usize,
     view: &'a View<'b>,
     config: &'a Config,
+    elapsed_seconds: f32,
 }
 
 pub struct AppWidgetState<'a> {
@@ -912,6 +920,7 @@ impl<'a> StatefulWidget for AppWidget<'a, '_> {
             object_list: &mut state.tabs[self.current_tab_index].list,
             view: self.view,
             config: self.config,
+            elapsed_seconds: self.elapsed_seconds,
         };
         widget.render(list_area, buf, state.mouse_areas);
 

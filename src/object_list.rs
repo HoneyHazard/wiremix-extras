@@ -504,6 +504,11 @@ pub struct ObjectListWidget<'a, 'b> {
     pub object_list: &'a mut ObjectList,
     pub view: &'a view::View<'b>,
     pub config: &'a Config,
+    /// Seconds elapsed since `App` started - the shared time reference
+    /// for `unified_imbalance = "cycle"`'s stateless phase-offset
+    /// rendering. See `NodeWidget::node_height`/`render` for how it's
+    /// used; irrelevant (and unused) for device rows.
+    pub elapsed_seconds: f32,
 }
 
 struct ObjectListRenderContext<'a> {
@@ -544,6 +549,7 @@ impl ObjectListWidget<'_, '_> {
                 selected,
                 self.object_list.channel_state(),
                 self.object_list.selected_channel,
+                self.elapsed_seconds,
             )
             .render(object_area, buf, mouse_areas);
         }

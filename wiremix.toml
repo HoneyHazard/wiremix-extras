@@ -62,7 +62,10 @@ channel_display = "unified"
 # "none" - no indication, just the mean (today's default, and the only
 #   behavior stock wiremix has ever had).
 # "cycle" - stay collapsed to one bar/row, but temporally cycle the
-#   label+percentage through each channel in turn while they differ.
+#   bar+percentage through each channel's own value in turn while they
+#   differ (labeled with the channel's raw index, not its name - "0 79%",
+#   not "FL 79%", to fit the same width the mean-only label already
+#   used). Fixed 1.5s interval for now, not yet configurable.
 # "split" - just that one imbalanced node renders split (see
 #   split_style) while every other, balanced node stays collapsed to one
 #   bar/row.

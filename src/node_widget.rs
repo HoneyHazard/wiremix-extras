@@ -102,6 +102,51 @@ fn volume_display(
     }
 }
 
+/// How long each channel is shown before `unified_imbalance = "cycle"`
+/// advances to the next one. Not user-configurable yet (see
+/// `NOTES-multichannel.md` §10) - a reasonable fixed value for a first
+/// version, in the 0.5-2s range floated during design.
+const CYCLE_INTERVAL_SECONDS: f32 = 1.5;
+
+/// Which channel `unified_imbalance = "cycle"` should show right now for
+/// an imbalanced node in Unified display, if it applies at all. `None`
+/// whenever cycling isn't active for this node (display isn't actually
+/// Unified, `unified_imbalance` isn't "cycle", or the node is balanced -
+/// nothing to cycle through).
+///
+/// Deliberately stateless: computed fresh from `elapsed_seconds` (shared
+/// across every node, so they all cycle at the same rate) and a
+/// per-node phase offset derived from the node's own object ID (so
+/// imbalanced nodes don't all flip in lockstep) - no stored "last switch
+/// time" field anywhere, matching how `positions`/`volumes` are already
+/// read fresh from `view::Node` every render rather than cached. See
+/// NOTES-multichannel.md §7.2/§10 for why this shape was chosen over
+/// explicit per-node stored state.
+fn cycling_channel(
+    channel_state: ChannelState,
+    node: &view::Node,
+    elapsed_seconds: f32,
+) -> Option<usize> {
+    if channel_state.channel_display != ChannelDisplay::Unified
+        || channel_state.unified_imbalance != UnifiedImbalance::Cycle
+    {
+        return None;
+    }
+    let channel_count = node.volumes.len();
+    if channel_count <= 1 || !is_imbalanced(node) {
+        return None;
+    }
+
+    // A stable, deterministic value in [0, 1) derived from the node's own
+    // ID - gives every imbalanced node the same cycle *rate* while
+    // landing at a different *phase*, so a list full of imbalanced nodes
+    // doesn't read as one uniform flashing block.
+    let phase = (u32::from(node.object_id) % 997) as f32 / 997.0;
+    let position =
+        elapsed_seconds / CYCLE_INTERVAL_SECONDS + phase * channel_count as f32;
+    Some(position as usize % channel_count)
+}
+
 pub struct NodeWidget<'a> {
     config: &'a Config,
     device_kind: Option<DeviceKind>,
@@ -112,6 +157,8 @@ pub struct NodeWidget<'a> {
     /// meaningful when `selected` is also true - another node's channel
     /// index has no bearing on this one's marker.
     selected_channel: Option<usize>,
+    /// Seconds elapsed since `App` started - see `cycling_channel`.
+    elapsed_seconds: f32,
 }
 
 impl<'a> NodeWidget<'a> {
@@ -122,6 +169,7 @@ impl<'a> NodeWidget<'a> {
         selected: bool,
         channel_state: ChannelState,
         selected_channel: Option<usize>,
+        elapsed_seconds: f32,
     ) -> Self {
         Self {
             config,
@@ -130,6 +178,7 @@ impl<'a> NodeWidget<'a> {
             selected,
             channel_state,
             selected_channel,
+            elapsed_seconds,
         }
     }
 
@@ -283,6 +332,11 @@ impl StatefulWidget for NodeWidget<'_> {
         ]);
 
         let display = volume_display(self.channel_state, self.node);
+        let cycling_channel = cycling_channel(
+            self.channel_state,
+            self.node,
+            self.elapsed_seconds,
+        );
         if display == VolumeDisplay::Stacked {
             self.render_channel_rows(
                 area,
@@ -345,6 +399,7 @@ impl StatefulWidget for NodeWidget<'_> {
                 self.config,
                 self.node,
                 display,
+                cycling_channel,
                 volume_area,
                 buf,
                 mouse_areas,
@@ -369,6 +424,7 @@ impl StatefulWidget for NodeWidget<'_> {
                 self.config,
                 self.node,
                 display,
+                cycling_channel,
                 volume_area,
                 buf,
                 mouse_areas,
@@ -561,6 +617,7 @@ fn render_volume(
     config: &Config,
     node: &view::Node,
     display: VolumeDisplay,
+    cycling_channel: Option<usize>,
     area: Rect,
     buf: &mut Buffer,
     mouse_areas: &mut Vec<MouseArea>,
@@ -574,7 +631,11 @@ fn render_volume(
                 .render(area, buf, mouse_areas);
         }
         VolumeDisplay::Unified | VolumeDisplay::Stacked => {
-            VolumeWidget::new(config, node).render(area, buf, mouse_areas);
+            VolumeWidget::new(config, node, cycling_channel).render(
+                area,
+                buf,
+                mouse_areas,
+            );
         }
     }
 }
@@ -582,11 +643,24 @@ fn render_volume(
 struct VolumeWidget<'a> {
     config: &'a Config,
     node: &'a view::Node,
+    /// When `Some(index)`, render channel `index`'s own label+percentage
+    /// instead of the whole-node mean - `unified_imbalance = "cycle"`'s
+    /// per-render channel choice (see `cycling_channel`), resolved by
+    /// the caller so this widget doesn't need to know about timing.
+    cycling_channel: Option<usize>,
 }
 
 impl<'a> VolumeWidget<'a> {
-    fn new(config: &'a Config, node: &'a view::Node) -> Self {
-        Self { config, node }
+    fn new(
+        config: &'a Config,
+        node: &'a view::Node,
+        cycling_channel: Option<usize>,
+    ) -> Self {
+        Self {
+            config,
+            node,
+            cycling_channel,
+        }
     }
 }
 
@@ -611,16 +685,32 @@ impl StatefulWidget for VolumeWidget<'_> {
 
         let volumes = &self.node.volumes;
         if !volumes.is_empty() {
-            let mean = volumes.iter().sum::<f32>() / volumes.len() as f32;
-            let volume = mean.cbrt();
-            let percent = (volume * 100.0).round() as u32;
+            // unified_imbalance = "cycle": show the currently-cycled
+            // channel's own value (both label and bar) instead of the
+            // mean. The label packs the channel index and percentage
+            // into the same 5-column budget the mean-only label already
+            // used ("0 79%" / "1100%") - no extra width, matching the
+            // "no width cost" goal from the original design discussion.
+            let (volume, label) = if let Some(index) = self.cycling_channel {
+                let raw = volumes.get(index).copied().unwrap_or(0.0);
+                let volume = raw.cbrt();
+                let percent = (volume * 100.0).round() as u32;
+                let label = if percent >= 100 {
+                    format!("{index}{percent}%")
+                } else {
+                    format!("{index} {percent}%")
+                };
+                (volume, label)
+            } else {
+                let mean = volumes.iter().sum::<f32>() / volumes.len() as f32;
+                let volume = mean.cbrt();
+                let percent = (volume * 100.0).round() as u32;
+                (volume, format!("{percent}%"))
+            };
 
-            Line::from(Span::styled(
-                format!("{percent}%"),
-                self.config.theme.volume,
-            ))
-            .alignment(Alignment::Right)
-            .render(volume_label, buf);
+            Line::from(Span::styled(label, self.config.theme.volume))
+                .alignment(Alignment::Right)
+                .render(volume_label, buf);
 
             let count = ((volume.clamp(0.0, max_volume) / max_volume)
                 * volume_bar.width as f32)
@@ -1154,7 +1244,16 @@ mod tests {
             split_style: config.split_style,
         };
         let display = volume_display(channel_state, node);
-        render_volume(config, node, display, area, &mut buf, &mut Vec::new());
+        let cycling_channel = cycling_channel(channel_state, node, 0.0);
+        render_volume(
+            config,
+            node,
+            display,
+            cycling_channel,
+            area,
+            &mut buf,
+            &mut Vec::new(),
+        );
         let mut line = String::new();
         for x in 0..area.width {
             line.push_str(buf.cell((x, 0)).map(|c| c.symbol()).unwrap_or(" "));
@@ -1189,6 +1288,7 @@ mod tests {
             selected,
             channel_state,
             selected_channel,
+            0.0,
         )
         .render(area, &mut buf, &mut Vec::new());
 
@@ -1272,6 +1372,27 @@ mod tests {
         assert!(rendered.contains("79%"));
         assert!(!rendered.contains("100%"));
         assert!(!rendered.contains("0%"));
+    }
+
+    #[test]
+    fn unified_imbalance_cycle_shows_one_channels_own_value() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        // test_node() always uses object_id 1, which (per the
+        // hand-verified phase_offset_differs_by_object_id test) lands on
+        // channel 0 at elapsed_seconds = 0.0 - render_to_string always
+        // renders at 0.0.
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        let config = config::Config::from_toml_str(
+            "channel_display = \"unified\"\nunified_imbalance = \"cycle\"",
+        );
+
+        let rendered = render_to_string(&config, &node);
+
+        // Channel 0's own 100% (not the 79% mean the same node showed in
+        // the unified_imbalance = "none" test above).
+        assert!(rendered.contains("0100%"));
+        assert!(!rendered.contains("79%"));
     }
 
     #[test]
@@ -1427,6 +1548,89 @@ mod tests {
         // Nothing to split - a single channel is unified regardless of
         // every other axis.
         assert_eq!(volume_display(state, &node), VolumeDisplay::Unified);
+    }
+
+    #[test]
+    fn cycling_channel_requires_unified_display() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]); // imbalanced
+
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Always;
+        state.unified_imbalance = UnifiedImbalance::Cycle;
+        assert_eq!(cycling_channel(state, &node, 0.0), None);
+    }
+
+    #[test]
+    fn cycling_channel_requires_unified_imbalance_cycle() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]); // imbalanced
+
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Unified;
+        state.unified_imbalance = UnifiedImbalance::None;
+        assert_eq!(cycling_channel(state, &node, 0.0), None);
+
+        state.unified_imbalance = UnifiedImbalance::Split;
+        assert_eq!(cycling_channel(state, &node, 0.0), None);
+    }
+
+    #[test]
+    fn cycling_channel_none_when_balanced() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
+
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Unified;
+        state.unified_imbalance = UnifiedImbalance::Cycle;
+        assert_eq!(cycling_channel(state, &node, 0.0), None);
+    }
+
+    #[test]
+    fn cycling_channel_advances_after_one_full_interval() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]);
+
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Unified;
+        state.unified_imbalance = UnifiedImbalance::Cycle;
+
+        let first =
+            cycling_channel(state, &node, 0.0).expect("imbalanced node");
+        let later = cycling_channel(state, &node, CYCLE_INTERVAL_SECONDS)
+            .expect("still imbalanced");
+        assert_ne!(
+            first, later,
+            "one full interval later should show the other channel"
+        );
+    }
+
+    #[test]
+    fn cycling_channel_phase_offset_differs_by_object_id() {
+        // Hand-verified against the phase formula: phase = (id % 997) /
+        // 997, position = elapsed/interval + phase * channel_count.
+        // id=1 -> phase ~0.001 -> position ~0.002 -> channel 0.
+        // id=500 -> phase ~0.502 -> position ~1.004 -> channel 1.
+        // Two nodes with the same imbalance, observed at the same
+        // instant, landing on different channels - proving they aren't
+        // locked to one shared cursor.
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let mut node_a = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]);
+        node_a.object_id = ObjectId::from_raw_id(1);
+        let mut node_b = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]);
+        node_b.object_id = ObjectId::from_raw_id(500);
+
+        let mut state = channel_state(false);
+        state.channel_display = ChannelDisplay::Unified;
+        state.unified_imbalance = UnifiedImbalance::Cycle;
+
+        assert_eq!(cycling_channel(state, &node_a, 0.0), Some(0));
+        assert_eq!(cycling_channel(state, &node_b, 0.0), Some(1));
     }
 
     #[test]
