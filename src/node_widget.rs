@@ -919,6 +919,26 @@ impl StatefulWidget for ChannelRowWidget<'_> {
 
         let max_volume = self.config.max_volume_percent / 100.0;
 
+        // Whenever a node's volume display is split, its monitor splits
+        // too - one mono-style gauge per channel row, honoring whatever
+        // the peaks config already says (off stays off; auto/mono both
+        // render as a single mono gauge here regardless, since one
+        // channel has nothing to show a left/right split of).
+        let (row_area, meter_area) = if self.config.peaks == Peaks::Off {
+            (area, None)
+        } else {
+            let layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints(vec![
+                    Constraint::Fill(4), // row_area
+                    Constraint::Fill(1), // _padding
+                    Constraint::Fill(4), // meter_area
+                ])
+                .spacing(1)
+                .split(area);
+            (layout[0], Some(layout[2]))
+        };
+
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -926,7 +946,7 @@ impl StatefulWidget for ChannelRowWidget<'_> {
                 Constraint::Min(0),     // volume_bar
             ])
             .spacing(1)
-            .split(area);
+            .split(row_area);
         let volume_label = layout[0];
         let volume_bar = layout[1];
 
@@ -1034,6 +1054,17 @@ impl StatefulWidget for ChannelRowWidget<'_> {
                     ),
                 ],
             ));
+        }
+
+        if let Some(meter_area) = meter_area {
+            let peak = self
+                .node
+                .peaks
+                .as_deref()
+                .and_then(|peaks| peaks.get(channel_index))
+                .map(|peak| peak.load());
+            meter::render_mono(meter_area, buf, peak, self.config);
+            self.node.peaks_dirty.store(false, Ordering::Relaxed);
         }
     }
 }
@@ -1439,6 +1470,38 @@ mod tests {
                                     // "{label} {percent}%" string right-aligned as one unit.
         assert!(lines[1].contains("FL  100%"));
         assert!(lines[2].contains("FR    0%"));
+    }
+
+    #[test]
+    fn channel_mode_meter_shows_each_channels_own_peak() {
+        use crate::atomic_f32::AtomicF32;
+        use std::sync::Arc;
+
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let mut node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
+        // Channel 0 loud, channel 1 silent - if each row read a shared or
+        // averaged peak instead of its own channel's, both rows would
+        // show the same fill.
+        node.peaks =
+            Some(Arc::from([AtomicF32::new(1.0), AtomicF32::new(0.0)]));
+        // extracompat uses distinct glyphs for active ('#') vs inactive
+        // ('=') meter cells - the default char_set uses the same glyph
+        // for both (styled by color only), which a plain-text render
+        // can't distinguish.
+        let config = config::Config::from_toml_str(
+            "char_set = \"extracompat\"\npeaks = \"auto\"",
+        );
+
+        let lines = render_node_lines(&config, &node, true, false, None);
+
+        assert_eq!(lines.len(), 3);
+        assert!(lines[1].contains('#'), "loud channel should show fill");
+        assert!(
+            !lines[2].contains('#'),
+            "silent channel should show no fill, proving it read its own \
+             peak rather than channel 0's"
+        );
     }
 
     #[test]
