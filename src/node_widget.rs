@@ -144,6 +144,16 @@ fn display_rows(
 /// version, in the 0.5-2s range floated during design.
 const CYCLE_INTERVAL_SECONDS: f32 = 1.5;
 
+/// Gap between a row's volume area and its meter area, wherever both
+/// appear side by side (the plain `NodeWidget::render` layout, and every
+/// `Stacked`-block row). Used to be a `Constraint::Fill(1)` sharing a
+/// proportional slice of the *entire remaining row width* with the
+/// volume/meter areas themselves - fine on a narrow terminal, but grew
+/// into genuinely wasted space on a wide one, since a divider doesn't
+/// need to get wider just because the terminal did. A small fixed gap
+/// gives that reclaimed width back to the volume/meter areas instead.
+const MIDSCREEN_GAP: u16 = 2;
+
 /// Which channel `unified_imbalance = "cycle"` should show right now for
 /// an imbalanced node in Unified display, if it applies at all. `None`
 /// whenever cycling isn't active for this node (display isn't actually
@@ -429,9 +439,9 @@ impl<'a> NodeWidget<'a> {
             Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
-                    Constraint::Fill(4), // row_area
-                    Constraint::Fill(1), // _padding
-                    Constraint::Fill(4), // meter_area
+                    Constraint::Fill(4),               // row_area
+                    Constraint::Length(MIDSCREEN_GAP), // _padding
+                    Constraint::Fill(4),               // meter_area
                 ])
                 .spacing(1)
                 .split(row_area)[0]
@@ -553,7 +563,7 @@ impl StatefulWidget for NodeWidget<'_> {
                 .constraints(vec![
                     Constraint::Length(NODE_VOLUME_PADDING), // _padding
                     Constraint::Fill(4),                     // volume_area
-                    Constraint::Fill(1),                     // _padding
+                    Constraint::Length(MIDSCREEN_GAP),       // _padding
                     Constraint::Fill(4),                     // meter_area
                     Constraint::Fill(1),                     // _padding
                 ])
@@ -859,8 +869,8 @@ impl StatefulWidget for VolumeWidget<'_> {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(5), // volume_label
-                Constraint::Min(0),    // volume_bar
+                Constraint::Length(VOLUME_LABEL_WIDTH), // volume_label
+                Constraint::Min(0),                     // volume_bar
             ])
             .spacing(1)
             .split(area);
@@ -871,20 +881,16 @@ impl StatefulWidget for VolumeWidget<'_> {
         if !volumes.is_empty() {
             // unified_imbalance = "cycle": show the currently-cycled
             // channel's own value (both label and bar) instead of the
-            // mean. The label packs the channel index and percentage
-            // into the same 5-column budget the mean-only label already
-            // used ("0 79%" / "1100%") - no extra width, matching the
-            // "no width cost" goal from the original design discussion.
+            // mean. Always includes a separating space between the
+            // channel index and its percentage ("0 64%", "1 100%") -
+            // dropping it to squeeze into a narrower column used to read
+            // as genuinely ambiguous ("1100%" looks like one thousand
+            // one hundred percent, not "channel 1, 100%").
             let (volume, label) = if let Some(index) = self.cycling_channel {
                 let raw = volumes.get(index).copied().unwrap_or(0.0);
                 let volume = raw.cbrt();
                 let percent = (volume * 100.0).round() as u32;
-                let label = if percent >= 100 {
-                    format!("{index}{percent}%")
-                } else {
-                    format!("{index} {percent}%")
-                };
-                (volume, label)
+                (volume, format!("{index} {percent}%"))
             } else {
                 let mean = volumes.iter().sum::<f32>() / volumes.len() as f32;
                 let volume = mean.cbrt();
@@ -1208,9 +1214,9 @@ impl StatefulWidget for ChannelRowWidget<'_> {
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
-                    Constraint::Fill(4), // row_area
-                    Constraint::Fill(1), // _padding
-                    Constraint::Fill(4), // meter_area
+                    Constraint::Fill(4),               // row_area
+                    Constraint::Length(MIDSCREEN_GAP), // _padding
+                    Constraint::Fill(4),               // meter_area
                 ])
                 .spacing(1)
                 .split(area);
@@ -1279,11 +1285,11 @@ impl StatefulWidget for ChannelRowWidget<'_> {
         let count = ((volume.clamp(0.0, max_volume) / max_volume)
             * volume_bar.width as f32)
             .round() as usize;
-        let filled = self.config.char_set.volume_filled.repeat(count);
+        let filled = self.config.char_set.volume_channel_filled.repeat(count);
         let blank = self
             .config
             .char_set
-            .volume_empty
+            .volume_channel_empty
             .repeat((volume_bar.width as usize).saturating_sub(count));
         Line::from(vec![
             Span::styled(filled, self.config.theme.volume_filled),
@@ -1360,6 +1366,16 @@ impl StatefulWidget for ChannelRowWidget<'_> {
 const RADIATING_LABEL_WIDTH: u16 =
     (channel_pairing::MAX_GROUP_NAME_WIDTH + 4) as u16;
 
+/// `VolumeWidget`'s own label width - wide enough for
+/// `"{index} {percent}%"` (`unified_imbalance = "cycle"`'s label; up to
+/// 6 characters, e.g. `"1 100%"`) as well as the plain mean-only
+/// `"{percent}%"` label every other `Unified` node uses. A tighter
+/// packed format ("1100%", no space, to fit a 5-wide column) used to be
+/// necessary here and read as genuinely ambiguous/malformed - always
+/// including the space and giving it the extra column reads correctly
+/// with no ambiguity.
+const VOLUME_LABEL_WIDTH: u16 = 6;
+
 /// Left padding before a plain single-row node's volume content
 /// (`VolumeWidget`/`StereoVolumeWidget`, i.e. `Unified` or the classic
 /// single-pair `Radiating` fast path) - chosen so its bar starts at
@@ -1368,15 +1384,16 @@ const RADIATING_LABEL_WIDTH: u16 =
 /// the list, split or not, not just within one node's own split block.
 /// Solved directly from both layouts' fixed column widths (see
 /// `node_volume_padding_and_radiating_rows_share_a_bar_start_column`),
-/// not derived from `RADIATING_LABEL_WIDTH` by any general formula -
-/// they only happen to land on the same value with today's widths.
-const NODE_VOLUME_PADDING: u16 = RADIATING_LABEL_WIDTH;
+/// not derived from `RADIATING_LABEL_WIDTH`/`VOLUME_LABEL_WIDTH` by any
+/// general formula - they just need to land on the same total.
+const NODE_VOLUME_PADDING: u16 = 6;
 
-/// `StereoVolumeWidget`'s label_l/label_r width (was 4, one column
-/// short of what's needed once `NODE_VOLUME_PADDING` widened its
-/// leading gap) - the extra column closes the remaining gap to
-/// `NODE_VOLUME_PADDING`'s target column, same derivation.
-const STEREO_VOLUME_LABEL_WIDTH: u16 = 5;
+/// `StereoVolumeWidget`'s label_l/label_r width - closes the gap to
+/// `NODE_VOLUME_PADDING`'s target column, same derivation. Its own
+/// content (a plain `"{percent}%"`, no cycling) never needs all of this
+/// width - the leading column or two is just blank padding for a
+/// balanced pair.
+const STEREO_VOLUME_LABEL_WIDTH: u16 = 6;
 
 /// One row within a `Stacked` block, in the shared column grid a
 /// `split_style = "radiating"` context uses for every row alike: label |
@@ -1454,9 +1471,9 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
-                    Constraint::Fill(4), // row_area
-                    Constraint::Fill(1), // _padding
-                    Constraint::Fill(4), // meter_area
+                    Constraint::Fill(4),               // row_area
+                    Constraint::Length(MIDSCREEN_GAP), // _padding
+                    Constraint::Fill(4),               // meter_area
                 ])
                 .spacing(1)
                 .split(area);
@@ -1532,12 +1549,15 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
             Span::styled(
                 self.config
                     .char_set
-                    .volume_empty
+                    .volume_channel_empty
                     .repeat((bar_l.width as usize).saturating_sub(left_count)),
                 self.config.theme.volume_empty,
             ),
             Span::styled(
-                self.config.char_set.volume_filled.repeat(left_count),
+                self.config
+                    .char_set
+                    .volume_channel_filled
+                    .repeat(left_count),
                 self.config.theme.volume_filled,
             ),
         ])
@@ -1613,13 +1633,16 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
             .round() as usize;
         Line::from(vec![
             Span::styled(
-                self.config.char_set.volume_filled.repeat(right_count),
+                self.config
+                    .char_set
+                    .volume_channel_filled
+                    .repeat(right_count),
                 self.config.theme.volume_filled,
             ),
             Span::styled(
                 self.config
                     .char_set
-                    .volume_empty
+                    .volume_channel_empty
                     .repeat((bar_r.width as usize).saturating_sub(right_count)),
                 self.config.theme.volume_empty,
             ),
@@ -1892,7 +1915,7 @@ mod tests {
             config::Config::from_toml_str("channel_display = \"always\"");
 
         // render_to_string uses a 40-wide area - the remaining bar space
-        // after fixed segments (40 - 15 = 25) is odd, exactly the case
+        // after fixed segments (40 - 17 = 23) is odd, exactly the case
         // that used to give the two Fill(1) bars unequal widths.
         let rendered = render_to_string(&config, &node);
 
@@ -1992,7 +2015,7 @@ mod tests {
 
         // Channel 0's own 100% (not the 79% mean the same node showed in
         // the unified_imbalance = "none" test above).
-        assert!(rendered.contains("0100%"));
+        assert!(rendered.contains("0 100%"));
         assert!(!rendered.contains("79%"));
     }
 
@@ -2383,8 +2406,8 @@ mod tests {
         // show the same fill.
         node.peaks =
             Some(Arc::from([AtomicF32::new(1.0), AtomicF32::new(0.0)]));
-        // extracompat uses distinct glyphs for active ('+') vs inactive
-        // ('-') per-channel meter cells - the default char_set uses the
+        // extracompat uses distinct glyphs for active (':') vs inactive
+        // ('.') per-channel meter cells - the default char_set uses the
         // same glyph for both (styled by color only), which a plain-text
         // render can't distinguish.
         let config = config::Config::from_toml_str(
@@ -2394,9 +2417,9 @@ mod tests {
         let lines = render_node_lines(&config, &node, true, false, None);
 
         assert_eq!(lines.len(), 3);
-        assert!(lines[1].contains('+'), "loud channel should show fill");
+        assert!(lines[1].contains(':'), "loud channel should show fill");
         assert!(
-            !lines[2].contains('+'),
+            !lines[2].contains(':'),
             "silent channel should show no fill, proving it read its own \
              peak rather than channel 0's"
         );
@@ -2591,7 +2614,9 @@ mod tests {
         let lines = render_node_lines(&config, &node, false, false, None);
         assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
 
-        let filled = config.char_set.volume_filled.as_str();
+        // Stacked-block rows (RadiatingRowWidget) use volume_channel_*,
+        // not the whole-node volume_filled/empty.
+        let filled = config.char_set.volume_channel_filled.as_str();
         let pair_row_filled = lines[1].matches(filled).count();
         let single_row_filled = lines[2].matches(filled).count();
         assert!(pair_row_filled > 0);
@@ -2621,7 +2646,7 @@ mod tests {
         let lines = render_node_lines(&config, &node, false, false, None);
         assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
 
-        let filled = config.char_set.volume_filled.as_str();
+        let filled = config.char_set.volume_channel_filled.as_str();
         let pair_row_bar_start =
             lines[1].find(filled).expect("FL's bar is fully filled");
         let single_row_bar_start =
@@ -2664,7 +2689,7 @@ mod tests {
             AtomicF32::new(0.0),
             AtomicF32::new(1.0),
         ]));
-        // extracompat's meter_channel_active ('+') is distinct from its
+        // extracompat's meter_channel_active (':') is distinct from its
         // meter_left/right_active ('#') - forcing mono must fall back to
         // the per-channel mono glyph, not attempt a stereo split.
         let config = config::Config::from_toml_str(
@@ -2680,7 +2705,7 @@ mod tests {
              detected pair"
         );
         assert!(
-            lines[1].contains('+'),
+            lines[1].contains(':'),
             "a forced-mono pair row still needs some kind of gauge"
         );
     }
@@ -2709,13 +2734,19 @@ mod tests {
             "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
              peaks = \"off\"\nmax_volume_percent = 100.0",
         );
-        let filled = config.char_set.volume_filled.as_str();
-        let bar_start = |lines: &[String]| -> usize {
+        // Unified and the classic single-pair Radiating fast path use
+        // volume_filled; a Stacked block's rows (RadiatingRowWidget) use
+        // the distinct volume_channel_filled instead (see
+        // channel_bar_glyphs_never_collide_with_whole_node_glyphs) - the
+        // *column* they start at is what must match, not the glyph.
+        let bar_start = |lines: &[String], filled: &str| -> usize {
             lines
                 .iter()
                 .find_map(|line| line.find(filled))
                 .expect("a fully-filled bar somewhere in the rendered node")
         };
+        let whole_node_filled = config.char_set.volume_filled.as_str();
+        let channel_filled = config.char_set.volume_channel_filled.as_str();
 
         let unified_node = test_node(Some(vec![mono]), vec![1.0]);
         let unified_lines =
@@ -2729,9 +2760,9 @@ mod tests {
         let stacked_lines =
             render_node_lines(&config, &stacked_node, false, false, None);
 
-        let unified_start = bar_start(&unified_lines);
-        let radiating_start = bar_start(&radiating_lines);
-        let stacked_start = bar_start(&stacked_lines);
+        let unified_start = bar_start(&unified_lines, whole_node_filled);
+        let radiating_start = bar_start(&radiating_lines, whole_node_filled);
+        let stacked_start = bar_start(&stacked_lines, channel_filled);
 
         assert_eq!(
             unified_start, radiating_start,

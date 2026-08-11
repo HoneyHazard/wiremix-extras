@@ -23,6 +23,8 @@ pub struct CharSetOverlay {
     list_more: Option<String>,
     volume_empty: Option<String>,
     volume_filled: Option<String>,
+    volume_channel_empty: Option<String>,
+    volume_channel_filled: Option<String>,
     meter_left_inactive: Option<String>,
     meter_left_active: Option<String>,
     meter_left_overload: Option<String>,
@@ -108,6 +110,8 @@ impl TryFrom<CharSetOverlay> for CharSet {
         validate_and_set!(list_more, 0);
         validate_and_set!(volume_empty, 1);
         validate_and_set!(volume_filled, 1);
+        validate_and_set!(volume_channel_empty, 1);
+        validate_and_set!(volume_channel_filled, 1);
         validate_and_set!(meter_left_inactive, 1);
         validate_and_set!(meter_left_active, 1);
         validate_and_set!(meter_left_overload, 1);
@@ -151,6 +155,12 @@ impl Default for CharSet {
             list_more: String::from("•••"),
             volume_empty: String::from("╌"),
             volume_filled: String::from("━"),
+            // Small, disjoint squares rather than volume_empty/filled's
+            // solid line - a channel row's own bar reads as visually
+            // distinct from the whole-node bar, not just a shorter copy
+            // of it.
+            volume_channel_empty: String::from("▫"),
+            volume_channel_filled: String::from("▪"),
             meter_left_inactive: String::from("▮"),
             meter_left_active: String::from("▮"),
             meter_left_overload: String::from("▮"),
@@ -199,6 +209,11 @@ impl CharSet {
             list_more: String::from("•••"),
             volume_empty: String::from("─"),
             volume_filled: String::from("━"),
+            // Dashed rather than volume_empty/filled's solid rules - a
+            // channel row's own bar reads as visually distinct from the
+            // whole-node bar, not just a shorter copy of it.
+            volume_channel_empty: String::from("┄"),
+            volume_channel_filled: String::from("┅"),
             meter_left_inactive: String::from("┃"),
             meter_left_active: String::from("┃"),
             meter_left_overload: String::from("┃"),
@@ -209,13 +224,16 @@ impl CharSet {
             meter_center_left_active: String::from("█"),
             meter_center_right_inactive: String::from("█"),
             meter_center_right_active: String::from("█"),
-            // A plain horizontal rule instead of meter_right's "┃" -
-            // reads as a distinctly thinner line so stacked channel-row
-            // meters don't blend into each other the way repeated full
-            // vertical strokes would.
-            meter_channel_inactive: String::from("─"),
-            meter_channel_active: String::from("─"),
-            meter_channel_overload: String::from("─"),
+            // A double-dashed rule, distinct from meter_right's "┃"
+            // *and* from volume_empty's plain "─" (an earlier version of
+            // this used "─" here too, which made a channel row's own
+            // monitor gauge visually indistinguishable from an empty
+            // volume bar) - reads as thinner than "┃" so stacked
+            // channel-row meters don't blend into each other, without
+            // being mistakable for a volume bar.
+            meter_channel_inactive: String::from("╌"),
+            meter_channel_active: String::from("╌"),
+            meter_channel_overload: String::from("╌"),
             dropdown_icon: String::from("▼"),
             dropdown_selector: String::from(">"),
             dropdown_more: String::from("•••"),
@@ -237,6 +255,11 @@ impl CharSet {
             list_more: String::from("~~~"),
             volume_empty: String::from("-"),
             volume_filled: String::from("="),
+            // Distinct ASCII from volume_empty/filled's "-" / "=" - a
+            // channel row's own bar reads as visually distinct from the
+            // whole-node bar, not just a shorter copy of it.
+            volume_channel_empty: String::from("o"),
+            volume_channel_filled: String::from("O"),
             meter_left_inactive: String::from("="),
             meter_left_active: String::from("#"),
             meter_left_overload: String::from("!"),
@@ -247,11 +270,14 @@ impl CharSet {
             meter_center_left_active: String::from("["),
             meter_center_right_inactive: String::from("]"),
             meter_center_right_active: String::from("]"),
-            // Distinct ASCII from meter_right's "=" / "#" / "!", so
-            // stacked channel-row meters read as visually different from
-            // a whole-node meter, not just a repeat of it.
-            meter_channel_inactive: String::from("-"),
-            meter_channel_active: String::from("+"),
+            // Distinct ASCII from meter_right's "=" / "#" / "!" *and*
+            // from volume_empty's "-" (an earlier version of this used
+            // "-" here too, which made a channel row's own monitor gauge
+            // visually indistinguishable from an empty volume bar) -
+            // still three distinct characters per state, since
+            // extracompat has no color to lean on.
+            meter_channel_inactive: String::from("."),
+            meter_channel_active: String::from(":"),
             meter_channel_overload: String::from("^"),
             dropdown_icon: String::from("\\"),
             dropdown_selector: String::from(">"),
@@ -434,5 +460,32 @@ mod tests {
         unknown = "unknown"
         "#;
         assert!(toml::from_str::<CharSetOverlay>(config).is_err());
+    }
+
+    #[test]
+    fn channel_bar_glyphs_never_collide_with_whole_node_glyphs() {
+        // A channel row's own volume bar and monitor gauge must each
+        // read as visually distinct from the whole-node volume bar -
+        // caught a real bug once already (compat/extracompat's
+        // meter_channel_* originally reused volume_empty's exact
+        // character, making a channel's monitor gauge indistinguishable
+        // from an empty volume bar).
+        for (name, char_set) in CharSet::defaults() {
+            let whole_node = [&char_set.volume_empty, &char_set.volume_filled];
+            let channel_specific = [
+                &char_set.volume_channel_empty,
+                &char_set.volume_channel_filled,
+                &char_set.meter_channel_inactive,
+                &char_set.meter_channel_active,
+                &char_set.meter_channel_overload,
+            ];
+            for channel_char in channel_specific {
+                assert!(
+                    !whole_node.contains(&channel_char),
+                    "{name}: a channel-specific glyph {channel_char:?} \
+                     collides with a whole-node volume glyph"
+                );
+            }
+        }
     }
 }

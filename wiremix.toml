@@ -64,8 +64,7 @@ channel_display = "unified"
 # "cycle" - stay collapsed to one bar/row, but temporally cycle the
 #   bar+percentage through each channel's own value in turn while they
 #   differ (labeled with the channel's raw index, not its name - "0 79%",
-#   not "FL 79%", to fit the same width the mean-only label already
-#   used). Fixed 1.5s interval for now, not yet configurable.
+#   not "FL 79%"). Fixed 1.5s interval for now, not yet configurable.
 # "split" - just that one imbalanced node renders split (see
 #   split_style) while every other, balanced node stays collapsed to one
 #   bar/row.
@@ -489,6 +488,14 @@ list_more = "•••"
 # Volume bar
 volume_empty = "╌"
 volume_filled = "━"
+# A single channel's own volume bar within a split display (Channel mode, or
+# any other multi-row layout - see channel_display/split_style above).
+# Separate from volume_empty/volume_filled so it can use a visually distinct
+# glyph - a channel row's own bar should read as clearly different from the
+# whole-node bar, not just a shorter copy of it. Must not match
+# volume_empty/volume_filled, or any meter_* glyph below.
+volume_channel_empty = "▫"
+volume_channel_filled = "▪"
 # Peak meter. Inactive = unlit, active = lit, overload = greater than 0.0 dB
 # Mono meters use only the right side characters
 meter_left_inactive = "▮"
@@ -507,7 +514,10 @@ meter_center_right_active = "▮"
 # other multi-row layout - see channel_display/split_style above). Separate
 # from meter_left/meter_right so it can use a shorter/thinner glyph -
 # several of these stacked directly above one another would otherwise read
-# as one solid blended bar instead of distinct per-channel gauges.
+# as one solid blended bar instead of distinct per-channel gauges. Must not
+# match volume_empty/volume_filled/volume_channel_empty/volume_channel_filled
+# either, or a channel's monitor gauge becomes indistinguishable from its
+# volume bar.
 meter_channel_inactive = "▬"
 meter_channel_active = "▬"
 meter_channel_overload = "▬"
@@ -602,6 +612,8 @@ tab_marker_right = "]"
 list_more = "•••"
 volume_empty = "─"
 volume_filled = "━"
+volume_channel_empty = "┄"
+volume_channel_filled = "┅"
 meter_left_inactive = "┃"
 meter_left_active = "┃"
 meter_left_overload = "┃"
@@ -612,9 +624,9 @@ meter_center_left_inactive = "█"
 meter_center_left_active = "█"
 meter_center_right_inactive = "█"
 meter_center_right_active = "█"
-meter_channel_inactive = "─"
-meter_channel_active = "─"
-meter_channel_overload = "─"
+meter_channel_inactive = "╌"
+meter_channel_active = "╌"
+meter_channel_overload = "╌"
 dropdown_icon = "▼"
 dropdown_selector = ">"
 dropdown_more = "•••"
@@ -633,6 +645,8 @@ tab_marker_right = "]"
 list_more = "~~~"
 volume_empty = "-"
 volume_filled = "="
+volume_channel_empty = "o"
+volume_channel_filled = "O"
 meter_left_inactive = "="
 meter_left_active = "#"
 meter_left_overload = "!"
@@ -643,8 +657,8 @@ meter_center_left_inactive = "["
 meter_center_left_active = "["
 meter_center_right_inactive = "]"
 meter_center_right_active = "]"
-meter_channel_inactive = "-"
-meter_channel_active = "+"
+meter_channel_inactive = "."
+meter_channel_active = ":"
 meter_channel_overload = "^"
 dropdown_icon = "\\"
 dropdown_selector = ">"
