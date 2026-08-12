@@ -119,9 +119,10 @@ view_cycle = [ "unified", "linked", "channels" ]
 channel_mode = false
 
 # A lone stereo pair's row never shows a group label at all (unlike a
-# multi-row block's own rows) - hand the one column of label space a
-# plain percentage never needs to the volume bars instead of leaving it
-# blank. On by default.
+# multi-row block's own rows) - shrink its label area down to just what
+# a plain percentage needs and hand the rest to the volume bars. Costs
+# it a shared bar-start column with any multi-row block rows elsewhere
+# in the same view. On by default.
 expand_unused_label_space = true
 
 # An unpaired channel's row in a split_style = "radiating" block

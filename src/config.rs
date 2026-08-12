@@ -88,9 +88,11 @@ pub struct Config {
     pub channels_meter_layout: MeterLayout,
     /// Configurable, default on. A lone stereo pair's `StereoVolumeWidget`
     /// (the classic single-row fast path - it never shows a group label
-    /// the way a multi-row block's `RadiatingRowWidget` does) hands the
-    /// one column of its own label area that a plain `"{percent}%"`
-    /// never needs to the volume bar(s) instead of leaving it blank.
+    /// the way a multi-row block's `RadiatingRowWidget` does) shrinks its
+    /// own label area down to just what a plain `"{percent}%"` needs,
+    /// handing the rest to the volume bars - a real width increase, not
+    /// a token one, at the cost of no longer sharing a bar-start column
+    /// with `RadiatingRowWidget` rows elsewhere in the same view.
     pub expand_unused_label_space: bool,
     /// Opt-in, default off. An unpaired channel's row in a
     /// `split_style = "radiating"` block normally occupies just the left

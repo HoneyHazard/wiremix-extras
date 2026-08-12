@@ -936,24 +936,25 @@ impl StatefulWidget for VolumeWidget<'_> {
 
         let max_volume = self.config.max_volume_percent / 100.0;
 
-        // Unified view uses its own label width - wider only when
-        // unified_imbalance = "cycle" is *configured*, never based on
-        // whether any particular row is actually imbalanced this frame.
-        // Every row in a Unified-view list must agree on this width
-        // regardless of its own balance state - varying it per row
-        // (tried and reverted) shifted cycling/imbalanced rows'
-        // bar-start column relative to balanced ones, which reads as a
-        // visual glitch scanning down the list rather than as "using
-        // the space efficiently". Linked/Channels always use the wider,
-        // alignment-driven VOLUME_LABEL_WIDTH regardless, whether or not
-        // cycling applies to them (it never does - see
-        // `cycling_channel`) - see `VOLUME_LABEL_WIDTH`'s doc comment
-        // for why.
+        // Unified view uses its own label width - wider only for a row
+        // that's actually showing a cycling channel's own value this
+        // frame (self.cycling_channel.is_some()), not just because
+        // unified_imbalance = "cycle" is configured. A balanced row's
+        // default width must stay exactly as it always was regardless
+        // of whether cycling is configured elsewhere in the list -
+        // "adjust the size/placement of the bar for unbalanced, not
+        // everything else" was the explicit ask, even though this does
+        // mean a row's own bar-start column can shift between frames as
+        // it enters/leaves an imbalanced state (an earlier attempt at
+        // uniform width across the whole list, trading that shift away,
+        // was tried and reverted per this same feedback). Linked/
+        // Channels always use the wider, alignment-driven
+        // VOLUME_LABEL_WIDTH regardless, whether or not cycling applies
+        // to them (it never does - see `cycling_channel`) - see
+        // `VOLUME_LABEL_WIDTH`'s doc comment for why.
         let view = self.channel_state.view();
-        let cycling =
-            self.channel_state.unified_imbalance == UnifiedImbalance::Cycle;
         let label_width = if view == ChannelView::Unified {
-            if cycling {
+            if self.cycling_channel.is_some() {
                 STOCK_VOLUME_LABEL_WIDTH_CYCLING
             } else {
                 STOCK_VOLUME_LABEL_WIDTH
@@ -1163,7 +1164,7 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
 
         let (label_l_width, label_r_width) =
             if self.config.expand_unused_label_space {
-                (STEREO_LABEL_L_WIDTH_EXPANDED, STEREO_LABEL_R_WIDTH_EXPANDED)
+                (STEREO_LABEL_WIDTH_EXPANDED, STEREO_LABEL_WIDTH_EXPANDED)
             } else {
                 (STEREO_LABEL_L_WIDTH, STEREO_LABEL_R_WIDTH)
             };
@@ -1577,21 +1578,19 @@ const STEREO_LABEL_L_WIDTH: u16 = 12;
 /// look visually balanced around the bars.
 const STEREO_LABEL_R_WIDTH: u16 = 6;
 
-/// `STEREO_LABEL_L_WIDTH`, under `expand_unused_label_space` - reclaims
-/// the one column of `label_l`'s own content budget that a plain
-/// `"{percent}%"` never needs (the budget was sized to match
-/// `VOLUME_LABEL_WIDTH`'s cycling-capable content width, a case
-/// `StereoVolumeWidget` never has), handing it to `bar_l`. The folded
-/// alignment padding underneath stays untouched - shrinking past this
-/// would move the bar's start column, not just its own width.
-const STEREO_LABEL_L_WIDTH_EXPANDED: u16 = STEREO_LABEL_L_WIDTH - 1;
-
-/// `STEREO_LABEL_R_WIDTH`, under `expand_unused_label_space` - reclaims
-/// the same one column `STEREO_LABEL_L_WIDTH_EXPANDED` does, handed to
-/// `bar_r`, so `bar_l`/`bar_r` stay the same width as each other (see
-/// the "two separate Fill(1) constraints" comment in
-/// `StereoVolumeWidget::render` for why that symmetry matters).
-const STEREO_LABEL_R_WIDTH_EXPANDED: u16 = STEREO_LABEL_R_WIDTH - 1;
+/// `STEREO_LABEL_L_WIDTH`/`STEREO_LABEL_R_WIDTH`, under
+/// `expand_unused_label_space` - both labels drop straight down to just
+/// what a plain `"{percent}%"` needs, discarding `STEREO_LABEL_L_WIDTH`'s
+/// own folded alignment padding entirely rather than trimming it by a
+/// token column or two. This deliberately gives up cross-widget column
+/// alignment with `RadiatingRowWidget` (a lone stereo pair's row no
+/// longer starts its bar at the same column a `Stacked` block's own
+/// radiating row would) in exchange for a much more noticeable amount
+/// of reclaimed width - the whole point of turning this setting on is
+/// "an arrangement that uses most of the space" over "an arrangement of
+/// greater symmetry", so a barely-perceptible one-column nudge doesn't
+/// actually deliver what was asked for.
+const STEREO_LABEL_WIDTH_EXPANDED: u16 = 5;
 
 /// One row within a `Stacked` block, in the shared column grid a
 /// `split_style = "radiating"` context uses for every row alike: label |
@@ -2249,17 +2248,19 @@ mod tests {
         let (narrow_left, narrow_right) = count_filled(&narrow_config);
         let (wide_left, wide_right) = count_filled(&expanded_config);
 
+        // label_l+label_r drop from 12+6=18 down to 5+5=10 - an 8-column
+        // reclaim, split evenly (4 each) between bar_l/bar_r, not just a
+        // token column or two.
         assert_eq!(
             wide_left,
-            narrow_left + 1,
-            "expand_unused_label_space should reclaim exactly the 1 \
-             column label_l's own content budget never needed"
+            narrow_left + 4,
+            "expand_unused_label_space should give bar_l a real width \
+             increase, not just a token column"
         );
         assert_eq!(
             wide_right,
-            narrow_right + 1,
-            "label_r reclaims the matching column so bar_l/bar_r stay \
-             equal-width"
+            narrow_right + 4,
+            "bar_r gains the same amount as bar_l so they stay equal-width"
         );
     }
 
@@ -2339,13 +2340,13 @@ mod tests {
         // defaults (see default_gap/default_right_margin in config.rs),
         // so it no longer takes the literal-stock fast path - the bar
         // starts right after the customized label (7) + spacing(1) =
-        // column 8. Only unified_imbalance = "cycle" widens it by the
-        // one extra column "{index} {percent}%" needs.
+        // column 8.
         let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
-        let node = test_node(Some(vec![mono]), vec![1.0]);
+        let balanced_node = test_node(Some(vec![mono]), vec![1.0]);
 
         let default_config = config::Config::from_toml_str("");
-        let default_rendered = render_to_string(&default_config, &node);
+        let default_rendered =
+            render_to_string(&default_config, &balanced_node);
         let bar_start = default_rendered
             .find(default_config.char_set.volume_filled.as_str())
             .expect("a filled bar somewhere");
@@ -2357,17 +2358,39 @@ mod tests {
 
         let cycle_config =
             config::Config::from_toml_str("unified_imbalance = \"cycle\"");
-        let cycle_rendered = render_to_string(&cycle_config, &node);
-        let cycle_bar_start = cycle_rendered
+
+        // unified_imbalance = "cycle" being configured must not by
+        // itself widen a row that's never actually imbalanced (a mono
+        // node can never be, per cycling_channel) - only a row that's
+        // genuinely showing a cycling channel's own value this frame
+        // gets adjusted, per explicit feedback that widening every
+        // row's default width (even ones that never cycle) wasn't
+        // wanted.
+        let balanced_cycle_rendered =
+            render_to_string(&cycle_config, &balanced_node);
+        let balanced_cycle_bar_start = balanced_cycle_rendered
             .find(cycle_config.char_set.volume_filled.as_str())
             .expect("a filled bar somewhere");
         assert_eq!(
-            cycle_bar_start, 12,
-            "unified_imbalance = \"cycle\" should widen the label to fit \
-             a channel label plus percentage (11) + 1 spacing - the \
-             same width for every row regardless of whether this \
-             particular one is ever actually imbalanced (see \
-             CYCLING_CHANNEL_LABEL_WIDTH)"
+            balanced_cycle_bar_start, 8,
+            "a node that's never imbalanced must keep the default \
+             width even with unified_imbalance = \"cycle\" configured"
+        );
+
+        // A genuinely imbalanced FL/FR pair, same config, does widen.
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let imbalanced_node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        let imbalanced_rendered =
+            render_to_string(&cycle_config, &imbalanced_node);
+        let imbalanced_bar_start = imbalanced_rendered
+            .find(cycle_config.char_set.volume_filled.as_str())
+            .expect("a filled bar somewhere");
+        assert_eq!(
+            imbalanced_bar_start, 12,
+            "a row actually showing a cycling channel's own value \
+             widens to fit a channel label plus percentage (11) + 1 \
+             spacing (see CYCLING_CHANNEL_LABEL_WIDTH)"
         );
     }
 
