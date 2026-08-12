@@ -144,17 +144,9 @@ impl ObjectList {
         };
     }
 
-    /// The current `ChannelView` - derived from `channel_mode`/
-    /// `channel_display` rather than stored separately, so it can never
-    /// drift out of sync with them.
+    /// The current `ChannelView` - see `ChannelState::view`.
     pub fn channel_view(&self) -> ChannelView {
-        if self.channel_mode {
-            ChannelView::Channels
-        } else if self.channel_display == ChannelDisplay::Always {
-            ChannelView::Linked
-        } else {
-            ChannelView::Unified
-        }
+        self.channel_state().view()
     }
 
     /// Switches directly to the given `ChannelView` - see

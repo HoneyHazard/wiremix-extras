@@ -252,6 +252,24 @@ pub struct ChannelState {
     pub pair_label_style: PairLabelStyle,
 }
 
+impl ChannelState {
+    /// The `ChannelView` this state amounts to - see `ChannelView`'s own
+    /// doc comment for the exact mapping. Used both by `ObjectList`
+    /// (`Action::CycleView`'s notion of "current view") and by
+    /// `node_widget` (to decide whether a row should use `Unified`
+    /// view's stock-identical layout or the aligned/aggressive one
+    /// shared by `Linked`/`Channels`).
+    pub fn view(&self) -> ChannelView {
+        if self.channel_mode {
+            ChannelView::Channels
+        } else if self.channel_display == ChannelDisplay::Always {
+            ChannelView::Linked
+        } else {
+            ChannelView::Unified
+        }
+    }
+}
+
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Keybinding {

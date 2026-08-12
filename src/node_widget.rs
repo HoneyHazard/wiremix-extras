@@ -15,8 +15,8 @@ use smallvec::smallvec;
 use crate::app::{Action, MouseArea};
 use crate::channel_pairing::{self, ChannelGroup};
 use crate::config::{
-    ChannelDisplay, ChannelState, Config, PairLabelStyle, Peaks, SplitStyle,
-    UnifiedImbalance,
+    ChannelDisplay, ChannelState, ChannelView, Config, PairLabelStyle, Peaks,
+    SplitStyle, UnifiedImbalance,
 };
 use crate::device_kind::DeviceKind;
 use crate::meter;
@@ -565,47 +565,94 @@ impl StatefulWidget for NodeWidget<'_> {
             mouse_areas,
         );
 
+        // Unified view (channel_mode off, channel_display = "unified")
+        // reproduces stock wiremix's own layout exactly - the same
+        // proportional Fill(1) gaps stock always used, not the fixed,
+        // more space-aggressive gap Linked/Channels use below. Since
+        // Unified is the only view with no `Stacked`/`Radiating` row
+        // ever appearing alongside a plain `VolumeWidget` row under
+        // stock settings (unified_imbalance = "none"), it has no need
+        // to stay column-aligned with anything else the way Linked/
+        // Channels do - see `ChannelState::view`.
+        let is_unified_view = self.channel_state.view() == ChannelView::Unified;
+
         // Render volume bar and (if enabled) peak meter
         if self.config.peaks == Peaks::Off {
-            let layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints(vec![
-                    Constraint::Fill(1),                          // volume_area
-                    Constraint::Length(self.config.right_margin), // _padding
-                ])
-                .split(bar_area);
-            let volume_area = layout[0];
+            let layout = if is_unified_view {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints(vec![
+                        Constraint::Length(2), // _padding (stock)
+                        Constraint::Fill(9),   // volume_area
+                        Constraint::Fill(1),   // _padding
+                    ])
+                    .split(bar_area)
+            } else {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints(vec![
+                        Constraint::Fill(1),                          // volume_area
+                        Constraint::Length(self.config.right_margin), // _padding
+                    ])
+                    .split(bar_area)
+            };
+            let volume_area = if is_unified_view {
+                layout[1]
+            } else {
+                layout[0]
+            };
 
             render_volume(
                 self.config,
                 self.node,
-                display,
-                cycling_channel,
+                VolumeContext {
+                    channel_state: self.channel_state,
+                    display,
+                    cycling_channel,
+                },
                 volume_area,
                 buf,
                 mouse_areas,
             );
         } else {
-            let (volume_weight, meter_weight) =
-                meter_split_weights(self.config);
-            let layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints(vec![
-                    Constraint::Fill(volume_weight),   // volume_area
-                    Constraint::Length(MIDSCREEN_GAP), // _padding
-                    Constraint::Fill(meter_weight),    // meter_area
-                    Constraint::Length(self.config.right_margin), // _padding
-                ])
-                .split(bar_area);
-            let volume_area = layout[0];
-            // index 1 is _padding
-            let meter_area = layout[2];
+            let layout = if is_unified_view {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints(vec![
+                        Constraint::Length(2), // _padding (stock)
+                        Constraint::Fill(4),   // volume_area
+                        Constraint::Fill(1),   // _padding (stock, proportional)
+                        Constraint::Fill(4),   // meter_area
+                        Constraint::Fill(1),   // _padding (stock)
+                    ])
+                    .split(bar_area)
+            } else {
+                let (volume_weight, meter_weight) =
+                    meter_split_weights(self.config);
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints(vec![
+                        Constraint::Fill(volume_weight),   // volume_area
+                        Constraint::Length(MIDSCREEN_GAP), // _padding
+                        Constraint::Fill(meter_weight),    // meter_area
+                        Constraint::Length(self.config.right_margin), // _padding
+                    ])
+                    .split(bar_area)
+            };
+            let (volume_area, meter_area) = if is_unified_view {
+                (layout[1], layout[3])
+            } else {
+                (layout[0], layout[2])
+            };
 
             render_volume(
                 self.config,
                 self.node,
-                display,
-                cycling_channel,
+                VolumeContext {
+                    channel_state: self.channel_state,
+                    display,
+                    cycling_channel,
+                },
                 volume_area,
                 buf,
                 mouse_areas,
@@ -831,6 +878,17 @@ fn radiating_row_label(
     }
 }
 
+/// Bundles `render_volume`'s per-render context args (as opposed to
+/// `config`/`node`/`area`/`buf`/`mouse_areas`, which every render call
+/// needs regardless) into one `Copy` value, keeping the function's own
+/// argument count down.
+#[derive(Clone, Copy)]
+struct VolumeContext {
+    channel_state: ChannelState,
+    display: VolumeDisplay,
+    cycling_channel: Option<usize>,
+}
+
 /// Renders a node's volume within a single-row area - the resolved
 /// `display` must be `Unified` or `Radiating`; `Stacked` is handled
 /// earlier in `NodeWidget::render()`, via `render_channel_rows`, since it
@@ -838,13 +896,12 @@ fn radiating_row_label(
 fn render_volume(
     config: &Config,
     node: &view::Node,
-    display: VolumeDisplay,
-    cycling_channel: Option<usize>,
+    ctx: VolumeContext,
     area: Rect,
     buf: &mut Buffer,
     mouse_areas: &mut Vec<MouseArea>,
 ) {
-    match display {
+    match ctx.display {
         VolumeDisplay::Radiating {
             left_index,
             right_index,
@@ -853,11 +910,13 @@ fn render_volume(
                 .render(area, buf, mouse_areas);
         }
         VolumeDisplay::Unified | VolumeDisplay::Stacked => {
-            VolumeWidget::new(config, node, cycling_channel).render(
-                area,
-                buf,
-                mouse_areas,
-            );
+            VolumeWidget::new(
+                config,
+                node,
+                ctx.channel_state,
+                ctx.cycling_channel,
+            )
+            .render(area, buf, mouse_areas);
         }
     }
 }
@@ -865,6 +924,13 @@ fn render_volume(
 struct VolumeWidget<'a> {
     config: &'a Config,
     node: &'a view::Node,
+    /// Whether the overall list is currently in `Unified` view (as
+    /// opposed to `Linked`/`Channels`) - decides which of two label
+    /// widths this row's bar should line up with: stock's own narrow
+    /// one (nothing else in a stock-settings Unified-view list ever
+    /// needs to stay aligned with it), or the wider one every Linked/
+    /// Channels row shares (see `VOLUME_LABEL_WIDTH`'s doc comment).
+    channel_state: ChannelState,
     /// When `Some(index)`, render channel `index`'s own label+percentage
     /// instead of the whole-node mean - `unified_imbalance = "cycle"`'s
     /// per-render channel choice (see `cycling_channel`), resolved by
@@ -876,11 +942,13 @@ impl<'a> VolumeWidget<'a> {
     fn new(
         config: &'a Config,
         node: &'a view::Node,
+        channel_state: ChannelState,
         cycling_channel: Option<usize>,
     ) -> Self {
         Self {
             config,
             node,
+            channel_state,
             cycling_channel,
         }
     }
@@ -894,11 +962,29 @@ impl StatefulWidget for VolumeWidget<'_> {
 
         let max_volume = self.config.max_volume_percent / 100.0;
 
+        // Unified view uses stock's own label width - `"{percent}%"`
+        // never needs more than 5, except when unified_imbalance =
+        // "cycle" is actually enabled, which needs one more column to
+        // fit the index digit ("0 100%") without truncating. Linked/
+        // Channels always use the wider, alignment-driven
+        // VOLUME_LABEL_WIDTH regardless, whether or not cycling applies
+        // to them (it never does - see `cycling_channel`) - see
+        // `VOLUME_LABEL_WIDTH`'s doc comment for why.
+        let label_width = if self.channel_state.view() == ChannelView::Unified {
+            if self.channel_state.unified_imbalance == UnifiedImbalance::Cycle {
+                STOCK_VOLUME_LABEL_WIDTH_CYCLING
+            } else {
+                STOCK_VOLUME_LABEL_WIDTH
+            }
+        } else {
+            VOLUME_LABEL_WIDTH
+        };
+
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(VOLUME_LABEL_WIDTH), // volume_label
-                Constraint::Min(0),                     // volume_bar
+                Constraint::Length(label_width), // volume_label
+                Constraint::Min(0),              // volume_bar
             ])
             .spacing(1)
             .split(area);
@@ -1423,14 +1509,14 @@ impl StatefulWidget for ChannelRowWidget<'_> {
 const RADIATING_LABEL_WIDTH: u16 =
     (channel_pairing::MAX_GROUP_NAME_WIDTH + 4) as u16;
 
-/// `VolumeWidget`'s own label width - wide enough for
-/// `"{index} {percent}%"` (`unified_imbalance = "cycle"`'s label; up to
-/// 6 characters, e.g. `"1 100%"`) as well as the plain mean-only
-/// `"{percent}%"` label every other `Unified` node uses, *plus* 6 extra
-/// blank columns folded in on the left. Those 6 columns used to be a
-/// separate `Constraint::Length` sitting in front of `volume_area` in
-/// the outer bar/meter `Layout` (a `NODE_VOLUME_PADDING` constant) -
-/// pure padding, invisible either way, but as a *sibling* constraint it
+/// `VolumeWidget`'s label width in `Linked`/`Channels` view - wide
+/// enough for `"{index} {percent}%"` (`unified_imbalance = "cycle"`'s
+/// label; up to 6 characters, e.g. `"1 100%"`) as well as the plain
+/// mean-only `"{percent}%"` label, *plus* 6 extra blank columns folded
+/// in on the left. Those 6 columns used to be a separate
+/// `Constraint::Length` sitting in front of `volume_area` in the outer
+/// bar/meter `Layout` (a `NODE_VOLUME_PADDING` constant) - pure
+/// padding, invisible either way, but as a *sibling* constraint it
 /// shrank the `Fill` budget the outer layout had to split between
 /// `volume_area` and `meter_area` relative to a `Stacked` row's own
 /// row/meter split (which has nothing analogous), so the two disagreed
@@ -1441,7 +1527,27 @@ const RADIATING_LABEL_WIDTH: u16 =
 /// classic path and a `Stacked`/`Radiating` row, which is what actually
 /// guarantees their meter columns match too, by construction rather
 /// than by coincidence.
+///
+/// `Unified` view doesn't use this at all - see
+/// `STOCK_VOLUME_LABEL_WIDTH`/`STOCK_VOLUME_LABEL_WIDTH_CYCLING`.
 const VOLUME_LABEL_WIDTH: u16 = 12;
+
+/// `VolumeWidget`'s label width in true `Unified` view (channel_mode
+/// off, channel_display = "unified") - stock wiremix's own width,
+/// exactly reproduced: just `"{percent}%"`, nothing else, and nothing
+/// else in a stock-settings Unified-view list (no `Stacked`/
+/// `Radiating` row ever appears there under stock settings) needs to
+/// stay column-aligned with it the way `Linked`/`Channels` rows do.
+const STOCK_VOLUME_LABEL_WIDTH: u16 = 5;
+
+/// Same as `STOCK_VOLUME_LABEL_WIDTH`, but for a Unified-view list
+/// where `unified_imbalance = "cycle"` is actually turned on - one
+/// column wider, to fit the extra index digit `"{index} {percent}%"`
+/// needs (`"0 100%"`) without truncating. This is the one place
+/// Unified view's layout is allowed to differ from true stock, and
+/// only when this fork-specific feature is deliberately opted into -
+/// see NOTES-multichannel.md.
+const STOCK_VOLUME_LABEL_WIDTH_CYCLING: u16 = 6;
 
 /// `StereoVolumeWidget`'s label_l width - same "closes the gap to a
 /// `Stacked` row's bar-start column" role `VOLUME_LABEL_WIDTH` plays,
@@ -1906,8 +2012,11 @@ mod tests {
         render_volume(
             config,
             node,
-            display,
-            cycling_channel,
+            VolumeContext {
+                channel_state,
+                display,
+                cycling_channel,
+            },
             area,
             &mut buf,
             &mut Vec::new(),
@@ -2057,6 +2166,84 @@ mod tests {
         assert!(rendered.contains("79%"));
         assert!(!rendered.contains("100%"));
         assert!(!rendered.contains("0%"));
+    }
+
+    #[test]
+    fn unified_view_volume_label_matches_stock_width_and_widens_only_for_cycle()
+    {
+        // True Unified view (default config - channel_display =
+        // "unified", unified_imbalance = "none") reproduces stock
+        // wiremix's own VolumeWidget label width (5, "{percent}%")
+        // exactly - the bar should start right after label(5) +
+        // spacing(1) = column 6. Only unified_imbalance = "cycle"
+        // widens it by the one extra column "{index} {percent}%" needs.
+        let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
+        let node = test_node(Some(vec![mono]), vec![1.0]);
+
+        let stock_config = config::Config::from_toml_str("");
+        let stock_rendered = render_to_string(&stock_config, &node);
+        let bar_start = stock_rendered
+            .find(stock_config.char_set.volume_filled.as_str())
+            .expect("a filled bar somewhere");
+        assert_eq!(
+            bar_start, 6,
+            "stock Unified view's bar should start at column 6 (5-wide \
+             label + 1 spacing), matching real stock wiremix exactly"
+        );
+
+        let cycle_config =
+            config::Config::from_toml_str("unified_imbalance = \"cycle\"");
+        let cycle_rendered = render_to_string(&cycle_config, &node);
+        let cycle_bar_start = cycle_rendered
+            .find(cycle_config.char_set.volume_filled.as_str())
+            .expect("a filled bar somewhere");
+        assert_eq!(
+            cycle_bar_start, 7,
+            "unified_imbalance = \"cycle\" should widen the label by \
+             exactly the one column it needs, not more"
+        );
+    }
+
+    #[test]
+    fn unified_view_and_linked_view_use_different_bar_start_columns() {
+        // A single-channel node renders via the same VolumeWidget in
+        // both views (nothing to split), but Unified view's column must
+        // stay independent of Linked/Channels' wider, alignment-driven
+        // one - they're deliberately different layouts now, not the
+        // same one with different content.
+        let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
+        let node = test_node(Some(vec![mono]), vec![1.0]);
+
+        let unified_config = config::Config::from_toml_str("");
+        let linked_config =
+            config::Config::from_toml_str("channel_display = \"always\"");
+
+        let unified_lines =
+            render_node_lines(&unified_config, &node, false, false, None);
+        let linked_lines =
+            render_node_lines(&linked_config, &node, false, false, None);
+
+        let bar_start = |lines: &[String], filled: &str| -> usize {
+            lines
+                .iter()
+                .find_map(|line| line.find(filled))
+                .expect("a filled bar somewhere in the rendered node")
+        };
+
+        let unified_start = bar_start(
+            &unified_lines,
+            unified_config.char_set.volume_filled.as_str(),
+        );
+        let linked_start = bar_start(
+            &linked_lines,
+            linked_config.char_set.volume_filled.as_str(),
+        );
+
+        assert_ne!(
+            unified_start, linked_start,
+            "Unified view's stock-matching column and Linked view's \
+             wider, alignment-driven column must not coincide"
+        );
     }
 
     #[test]
@@ -3051,6 +3238,10 @@ mod tests {
         // right_margin = 0 (the default) lets content reach further
         // right than a larger right_margin does - checked via the last
         // non-space column used by a fully-filled classic bar+meter row.
+        // right_margin only applies outside Unified view (Unified
+        // reproduces stock's own proportional layout unconditionally -
+        // see STOCK_VOLUME_LABEL_WIDTH's doc comment), so this needs a
+        // Linked-view node to actually exercise it.
         let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
         let node = test_node(Some(vec![mono]), vec![1.0]);
 
@@ -3062,10 +3253,11 @@ mod tests {
                 .expect("at least one rendered line")
         };
 
-        let no_margin_config =
-            config::Config::from_toml_str("peaks = \"auto\"\nright_margin = 0");
+        let no_margin_config = config::Config::from_toml_str(
+            "channel_display = \"always\"\npeaks = \"auto\"\nright_margin = 0",
+        );
         let wide_margin_config = config::Config::from_toml_str(
-            "peaks = \"auto\"\nright_margin = 10",
+            "channel_display = \"always\"\npeaks = \"auto\"\nright_margin = 10",
         );
 
         let no_margin_lines =
