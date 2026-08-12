@@ -27,6 +27,11 @@ pub struct ThemeOverlay {
     meter_overload: Option<StyleDef>,
     meter_center_inactive: Option<StyleDef>,
     meter_center_active: Option<StyleDef>,
+    meter_channel_inactive: Option<StyleDef>,
+    meter_channel_active: Option<StyleDef>,
+    meter_channel_overload: Option<StyleDef>,
+    meter_channel_center_inactive: Option<StyleDef>,
+    meter_channel_center_active: Option<StyleDef>,
     config_device: Option<StyleDef>,
     config_profile: Option<StyleDef>,
     dropdown_icon: Option<StyleDef>,
@@ -89,6 +94,18 @@ impl TryFrom<ThemeOverlay> for Theme {
             };
         }
 
+        // Same as `set!`, but for the optional `meter_channel_*`
+        // overrides, whose unset state (`None`) is itself meaningful
+        // (falls back to the corresponding stock `meter_*` field at
+        // render time) rather than just "use the built-in default".
+        macro_rules! set_optional {
+            ($field:ident) => {
+                if let Some($field) = overlay.$field {
+                    theme.$field = Some($field.into());
+                }
+            };
+        }
+
         set!(default_device);
         set!(default_stream);
         set!(selector);
@@ -106,6 +123,11 @@ impl TryFrom<ThemeOverlay> for Theme {
         set!(meter_overload);
         set!(meter_center_inactive);
         set!(meter_center_active);
+        set_optional!(meter_channel_inactive);
+        set_optional!(meter_channel_active);
+        set_optional!(meter_channel_overload);
+        set_optional!(meter_channel_center_inactive);
+        set_optional!(meter_channel_center_active);
         set!(config_device);
         set!(config_profile);
         set!(dropdown_icon);
@@ -141,6 +163,11 @@ impl Default for Theme {
             meter_overload: Style::default().fg(Color::Red),
             meter_center_inactive: Style::default().fg(Color::DarkGray),
             meter_center_active: Style::default().fg(Color::LightGreen),
+            meter_channel_inactive: None,
+            meter_channel_active: None,
+            meter_channel_overload: None,
+            meter_channel_center_inactive: None,
+            meter_channel_center_active: None,
             config_device: Style::default(),
             config_profile: Style::default(),
             dropdown_icon: Style::default(),
@@ -185,6 +212,11 @@ impl Theme {
             meter_overload: Style::default().add_modifier(Modifier::BOLD),
             meter_center_inactive: Style::default().add_modifier(Modifier::DIM),
             meter_center_active: Style::default().add_modifier(Modifier::BOLD),
+            meter_channel_inactive: None,
+            meter_channel_active: None,
+            meter_channel_overload: None,
+            meter_channel_center_inactive: None,
+            meter_channel_center_active: None,
             config_device: Style::default(),
             config_profile: Style::default(),
             dropdown_icon: Style::default(),
@@ -218,6 +250,11 @@ impl Theme {
             meter_overload: Style::default(),
             meter_center_inactive: Style::default(),
             meter_center_active: Style::default(),
+            meter_channel_inactive: None,
+            meter_channel_active: None,
+            meter_channel_overload: None,
+            meter_channel_center_inactive: None,
+            meter_channel_center_active: None,
             config_device: Style::default(),
             config_profile: Style::default(),
             dropdown_icon: Style::default(),
@@ -308,5 +345,29 @@ mod tests {
             assert_eq!(theme.tab_selected, Style::default());
             assert_eq!(theme.selector, builtin.selector);
         }
+    }
+
+    #[test]
+    fn meter_channel_colors_are_unset_by_default_and_configurable() {
+        for builtin in Theme::defaults().values() {
+            assert_eq!(builtin.meter_channel_inactive, None);
+            assert_eq!(builtin.meter_channel_active, None);
+            assert_eq!(builtin.meter_channel_overload, None);
+            assert_eq!(builtin.meter_channel_center_inactive, None);
+            assert_eq!(builtin.meter_channel_center_active, None);
+        }
+
+        let config = r#"
+        meter_channel_inactive = { fg = "Black" }
+        "#;
+        let overlay = toml::from_str::<ThemeOverlay>(config).unwrap();
+        let theme = Theme::try_from(overlay).unwrap();
+        assert_eq!(
+            theme.meter_channel_inactive,
+            Some(Style::default().fg(Color::Black))
+        );
+        // Only the configured field changes - everything else, including
+        // the other meter_channel_* fields, stays unset.
+        assert_eq!(theme.meter_channel_active, None);
     }
 }

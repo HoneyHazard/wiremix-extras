@@ -75,6 +75,11 @@ pub struct Config {
     /// spells out that it's a pair ("F L/R"); "short" is just the group
     /// name ("F").
     pub pair_label_style: PairLabelStyle,
+    /// Which `ChannelView`s `Action::CycleView` steps through, and in
+    /// what order - see `ChannelView`. Removing one excludes it from
+    /// cycling without disabling it entirely; it's still reachable via
+    /// `Action::SelectView`. Must be non-empty.
+    pub view_cycle: Vec<ChannelView>,
     /// Percentage of a bar/meter row's combined volume+meter content width
     /// given to the meter side once `peaks` is on (the volume side gets
     /// the rest) - applies uniformly everywhere a meter is drawn: the
@@ -141,6 +146,8 @@ struct ConfigFile {
     channel_mode: bool,
     #[serde(default = "default_pair_label_style")]
     pair_label_style: Option<PairLabelStyle>,
+    #[serde(default = "default_view_cycle")]
+    view_cycle: Vec<ChannelView>,
     #[serde(default = "default_meter_width_percent")]
     meter_width_percent: Option<f32>,
     #[serde(default = "default_right_margin")]
@@ -197,6 +204,35 @@ pub enum PairLabelStyle {
     #[default]
     Verbose,
     Short,
+}
+
+/// One of the three high-level ways the object list can display and
+/// target a node's volume - a convenience wrapper over `channel_mode`/
+/// `channel_display`, derived from them rather than stored as separate
+/// state (see `ObjectList::channel_view`), used only for `Action::
+/// SelectView`/`Action::CycleView` and `Config::view_cycle`.
+/// "unified" = `channel_mode = false`, `channel_display = "unified"`
+/// (one collapsed bar/row). "linked" = `channel_mode = false`,
+/// `channel_display = "always"` (always split, but volume keys still
+/// adjust every channel together). "channels" = `channel_mode = true`
+/// (always split, volume keys target only the cursored channel).
+#[derive(
+    Deserialize,
+    Default,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChannelView {
+    #[default]
+    Unified,
+    Linked,
+    Channels,
 }
 
 /// Bundles the independent axes that decide how a node's volume is
@@ -325,6 +361,20 @@ pub struct Theme {
     pub meter_overload: Style,
     pub meter_center_inactive: Style,
     pub meter_center_active: Style,
+    /// Per-channel-row monitor color overrides, same "unset falls back to
+    /// the stock meter_* field above" idea as `CharSet`'s
+    /// `meter_channel_*` glyph overrides - a thin/light-weight glyph
+    /// (from a font family the terminal renders differently than the
+    /// stock box-drawing glyphs) can read visibly brighter than the
+    /// stock inactive color even under the identical `Style`, so a theme
+    /// may want to compensate with a genuinely different (usually
+    /// darker) color for split rows specifically, without touching the
+    /// classic whole-node meter's own colors.
+    pub meter_channel_inactive: Option<Style>,
+    pub meter_channel_active: Option<Style>,
+    pub meter_channel_overload: Option<Style>,
+    pub meter_channel_center_inactive: Option<Style>,
+    pub meter_channel_center_active: Option<Style>,
     pub config_device: Style,
     pub config_profile: Style,
     pub dropdown_icon: Style,
@@ -422,6 +472,14 @@ fn default_channel_mode() -> bool {
 
 fn default_pair_label_style() -> Option<PairLabelStyle> {
     Some(PairLabelStyle::default())
+}
+
+fn default_view_cycle() -> Vec<ChannelView> {
+    vec![
+        ChannelView::Unified,
+        ChannelView::Linked,
+        ChannelView::Channels,
+    ]
 }
 
 fn default_meter_width_percent() -> Option<f32> {
@@ -564,6 +622,10 @@ impl TryFrom<ConfigFile> for Config {
             anyhow::bail!("tabs must be non-empty");
         }
 
+        if config_file.view_cycle.is_empty() {
+            anyhow::bail!("view_cycle must be non-empty");
+        }
+
         let tab = config_file
             .tabs
             .iter()
@@ -599,6 +661,7 @@ impl TryFrom<ConfigFile> for Config {
             split_style: config_file.split_style.unwrap_or_default(),
             channel_mode: config_file.channel_mode,
             pair_label_style: config_file.pair_label_style.unwrap_or_default(),
+            view_cycle: config_file.view_cycle,
             meter_width_percent: config_file
                 .meter_width_percent
                 .unwrap_or_default(),
@@ -693,6 +756,7 @@ pub mod strict {
         split_style: Option<SplitStyle>,
         channel_mode: bool,
         pair_label_style: Option<PairLabelStyle>,
+        view_cycle: Vec<ChannelView>,
         meter_width_percent: Option<f32>,
         right_margin: u16,
         filters: Vec<Filter>,
@@ -721,6 +785,7 @@ pub mod strict {
                 split_style: strict.split_style,
                 channel_mode: strict.channel_mode,
                 pair_label_style: strict.pair_label_style,
+                view_cycle: strict.view_cycle,
                 meter_width_percent: strict.meter_width_percent,
                 right_margin: strict.right_margin,
                 filters: strict.filters,
@@ -1002,6 +1067,33 @@ mod tests {
         let too_high: ConfigFile =
             toml::from_str("meter_width_percent = 100.0").unwrap();
         assert!(Config::try_from(too_high).is_err());
+    }
+
+    #[test]
+    fn view_cycle_defaults_to_all_three_and_is_configurable() {
+        let default = Config::from_toml_str("");
+        assert_eq!(
+            default.view_cycle,
+            vec![
+                ChannelView::Unified,
+                ChannelView::Linked,
+                ChannelView::Channels
+            ]
+        );
+
+        let configured =
+            Config::from_toml_str("view_cycle = [\"linked\", \"channels\"]");
+        assert_eq!(
+            configured.view_cycle,
+            vec![ChannelView::Linked, ChannelView::Channels]
+        );
+    }
+
+    #[test]
+    fn view_cycle_empty_is_error() {
+        let config_file: ConfigFile =
+            toml::from_str("view_cycle = []").unwrap();
+        assert!(Config::try_from(config_file).is_err());
     }
 
     #[test]

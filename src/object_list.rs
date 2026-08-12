@@ -14,8 +14,8 @@ use smallvec::smallvec;
 
 use crate::app::{Action, MouseArea};
 use crate::config::{
-    ChannelDisplay, ChannelState, Config, PairLabelStyle, SplitStyle,
-    UnifiedImbalance,
+    ChannelDisplay, ChannelState, ChannelView, Config, PairLabelStyle,
+    SplitStyle, UnifiedImbalance,
 };
 use crate::device_kind::DeviceKind;
 use crate::device_widget::DeviceWidget;
@@ -142,6 +142,59 @@ impl ObjectList {
             ChannelDisplay::Unified => ChannelDisplay::Always,
             ChannelDisplay::Always => ChannelDisplay::Unified,
         };
+    }
+
+    /// The current `ChannelView` - derived from `channel_mode`/
+    /// `channel_display` rather than stored separately, so it can never
+    /// drift out of sync with them.
+    pub fn channel_view(&self) -> ChannelView {
+        if self.channel_mode {
+            ChannelView::Channels
+        } else if self.channel_display == ChannelDisplay::Always {
+            ChannelView::Linked
+        } else {
+            ChannelView::Unified
+        }
+    }
+
+    /// Switches directly to the given `ChannelView` - see
+    /// `Action::SelectView`. `unified_imbalance`/`split_style`/
+    /// `pair_label_style` are untouched; they're orthogonal display
+    /// refinements, not part of the view itself.
+    pub fn select_view(&mut self, target: ChannelView, view: &view::View) {
+        match target {
+            ChannelView::Unified => {
+                self.channel_mode = false;
+                self.channel_display = ChannelDisplay::Unified;
+            }
+            ChannelView::Linked => {
+                self.channel_mode = false;
+                self.channel_display = ChannelDisplay::Always;
+            }
+            ChannelView::Channels => {
+                self.channel_mode = true;
+            }
+        }
+        self.selected_channel =
+            self.initial_channel(view, self.selected, false);
+    }
+
+    /// Advances to the next `ChannelView` in `view_cycle`, wrapping - see
+    /// `Action::CycleView`. If the current view isn't in `view_cycle`
+    /// (reached via `select_view` while it was excluded), lands on
+    /// `view_cycle`'s first entry instead of trying to guess a "next"
+    /// relative to a view that isn't part of the cycle.
+    pub fn cycle_channel_view(
+        &mut self,
+        view_cycle: &[ChannelView],
+        view: &view::View,
+    ) {
+        let current = self.channel_view();
+        let next = match view_cycle.iter().position(|v| *v == current) {
+            Some(i) => view_cycle[(i + 1) % view_cycle.len()],
+            None => *view_cycle.first().unwrap_or(&ChannelView::Unified),
+        };
+        self.select_view(next, view);
     }
 
     /// Bundles the display/setting axes for passing to `NodeWidget`.
@@ -1097,6 +1150,109 @@ mod tests {
         object_list.toggle_channel_mode(&view);
         assert!(!object_list.channel_mode);
         assert_eq!(object_list.selected_channel, None);
+    }
+
+    #[test]
+    fn channel_view_derives_from_channel_mode_and_channel_display() {
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        assert_eq!(object_list.channel_view(), ChannelView::Unified);
+
+        object_list.channel_display = ChannelDisplay::Always;
+        assert_eq!(object_list.channel_view(), ChannelView::Linked);
+
+        // channel_mode wins regardless of channel_display - a lone
+        // channel_mode = true node with channel_display left "unified"
+        // still renders split (see NodeWidget), so it must report as
+        // Channels here too.
+        object_list.channel_mode = true;
+        assert_eq!(object_list.channel_view(), ChannelView::Channels);
+        object_list.channel_display = ChannelDisplay::Unified;
+        assert_eq!(object_list.channel_view(), ChannelView::Channels);
+    }
+
+    #[test]
+    fn select_view_switches_channel_mode_and_channel_display() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.down(&view);
+
+        object_list.select_view(ChannelView::Linked, &view);
+        assert!(!object_list.channel_mode);
+        assert_eq!(object_list.channel_display, ChannelDisplay::Always);
+        assert_eq!(object_list.selected_channel, None);
+
+        object_list.select_view(ChannelView::Channels, &view);
+        assert!(object_list.channel_mode);
+        assert_eq!(object_list.selected_channel, Some(0));
+
+        object_list.select_view(ChannelView::Unified, &view);
+        assert!(!object_list.channel_mode);
+        assert_eq!(object_list.channel_display, ChannelDisplay::Unified);
+        assert_eq!(object_list.selected_channel, None);
+    }
+
+    #[test]
+    fn cycle_channel_view_advances_through_view_cycle_and_wraps() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+        let cycle = [
+            ChannelView::Unified,
+            ChannelView::Linked,
+            ChannelView::Channels,
+        ];
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.down(&view);
+        assert_eq!(object_list.channel_view(), ChannelView::Unified);
+
+        object_list.cycle_channel_view(&cycle, &view);
+        assert_eq!(object_list.channel_view(), ChannelView::Linked);
+
+        object_list.cycle_channel_view(&cycle, &view);
+        assert_eq!(object_list.channel_view(), ChannelView::Channels);
+
+        // Wraps back to the first entry after the last.
+        object_list.cycle_channel_view(&cycle, &view);
+        assert_eq!(object_list.channel_view(), ChannelView::Unified);
+    }
+
+    #[test]
+    fn cycle_channel_view_lands_on_first_entry_when_current_view_is_excluded() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+        // Unified excluded from the cycle - reachable via select_view, but
+        // cycling from it should land on the cycle's first entry rather
+        // than trying to compute a "next" relative to a view that isn't
+        // part of the cycle at all.
+        let cycle = [ChannelView::Linked, ChannelView::Channels];
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.down(&view);
+        assert_eq!(object_list.channel_view(), ChannelView::Unified);
+
+        object_list.cycle_channel_view(&cycle, &view);
+        assert_eq!(object_list.channel_view(), ChannelView::Linked);
     }
 
     #[test]

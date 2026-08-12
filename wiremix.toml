@@ -96,6 +96,16 @@ split_style = "radiating"
 # "short" - just the group name, e.g. "F", "R".
 pair_label_style = "verbose"
 
+# Which of the three high-level views ("unified" - one collapsed bar/row,
+# channel_mode = false, channel_display = "unified"; "linked" - always
+# split but volume keys still adjust every channel together, channel_mode
+# = false, channel_display = "always"; "channels" - always split, volume
+# keys target only the cursored channel, channel_mode = true)
+# Action::CycleView steps through, and in what order. Removing one
+# excludes it from cycling without disabling it entirely - it's still
+# reachable directly via Action::SelectView. Must be non-empty.
+view_cycle = [ "unified", "linked", "channels" ]
+
 # Percentage of a bar/meter row's combined volume+meter content width
 # given to the meter side once peaks is not "off" (the volume side gets
 # the rest). Applies everywhere a meter is drawn - the classic single-row
@@ -115,7 +125,9 @@ right_margin = 0
 # control *display*, not which channels an adjustment affects - though
 # channel_mode = true always renders split (stacked), regardless of
 # those settings. Toggle live with the "ToggleChannelMode" action
-# (unbound by default).
+# (unbound by default - Space is bound to "CycleView" instead, the
+# higher-level action this and channel_display are both folded into,
+# see the Keybindings section below).
 channel_mode = false
 
 
@@ -195,7 +207,13 @@ keybindings = [
  { key = { Char = "0" }, action = { SetAbsoluteVolume = 1.00 } },
  # Open the help menu
  { key = { Char = "?" }, action = "Help" },
- # There are six actions which don't have default bindings:
+ # Step to the next of the three views in view_cycle (see the Main
+ # Options section above) - "unified" (one collapsed bar/row) ->
+ # "linked" (always split, volume keys still adjust every channel
+ # together) -> "channels" (always split, volume keys target only the
+ # cursored channel) -> back to "unified".
+ { key = { Char = " " }, action = "CycleView" },
+ # There are seven actions which don't have default bindings:
  # 1. "Nothing": Do nothing - can effectively delete a default keybinding
  # 2. { SelectTab = N }: Open the Nth tab
  # 3. { SetChannelAbsoluteVolume = [N, volume] }: Set the volume of just
@@ -203,26 +221,25 @@ keybindings = [
  #    `volume`, leaving every other channel alone
  # 4. { SetChannelRelativeVolume = [N, delta] }: Adjust the volume of just
  #    channel N by `delta`, relative to its own current value
- # 5. "ToggleChannelMode": Toggle "Channel mode" - while active, the
- #    selected item's own channels expand into one row each (for any item
- #    with more than one channel) and Up/Down step through them one at a
- #    time before moving to the next item, and the ordinary volume keys
- #    (h/l, Left/Right, 0-9, etc.) adjust only the currently-cursored
- #    channel instead of every channel together
- # 6. "CycleChannelDisplay": Cycle channel_display between "unified" and
- #    "always" - see the Main Options section above
+ # 5. { SelectView = "unified"|"linked"|"channels" }: Jump directly to one
+ #    of the three views "CycleView" above steps through, regardless of
+ #    view_cycle - e.g. a dedicated key straight to "channels" without
+ #    cycling through "linked" first
+ # 6. "ToggleChannelMode"/"CycleChannelDisplay": The two lower-level axes
+ #    "CycleView"/"SelectView" are built from - toggling "Channel mode"
+ #    (individual per-channel targeting) and cycling channel_display
+ #    (unified/always) independently, for anyone who wants that two-axis
+ #    control instead of three named views
  #
  # For example, to control the two channels of a stereo pair
  # independently with Ctrl+Left/Right (channel 0) and Ctrl+Up/Down
- # (channel 1) - useful alongside channel_display = "always" above, or
- # with "ToggleChannelMode" bound to a key of your choice:
+ # (channel 1), and jump straight to Channel mode with Ctrl+Space:
  #
  # { key = "Left", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [0, -0.01] } },
  # { key = "Right", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [0, 0.01] } },
  # { key = "Up", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [1, 0.01] } },
  # { key = "Down", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [1, -0.01] } },
- # { key = { Char = " " }, action = "ToggleChannelMode" },
- # { key = { Char = "v" }, action = "CycleChannelDisplay" },
+ # { key = { Char = " " }, modifiers = "CONTROL", action = { SelectView = "channels" } },
  #
  # Ctrl+arrow keys aren't guaranteed to reach wiremix on every terminal -
  # some terminal emulators and multiplexers (tmux, screen) intercept them

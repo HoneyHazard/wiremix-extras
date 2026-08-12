@@ -77,6 +77,15 @@ pub enum Action {
     /// and "always" (always split, per `split_style`). Independent of
     /// `ToggleChannelMode`, which controls *setting*, not display.
     CycleChannelDisplay,
+    /// Switches directly to one of the three high-level views (Unified/
+    /// Linked/Channels - see `ChannelView`), regardless of `view_cycle`.
+    SelectView(crate::config::ChannelView),
+    /// Advances to the next view in `view_cycle`, wrapping - the
+    /// higher-level counterpart to `ToggleChannelMode`/
+    /// `CycleChannelDisplay` (which this doesn't replace - both still
+    /// work independently for anyone who wants the old two-axis
+    /// behavior instead of three named views).
+    CycleView,
     #[serde(skip_deserializing)]
     SelectObject(ObjectId),
     /// Moves the channel-mode cursor to a specific channel index, without
@@ -131,6 +140,8 @@ impl std::fmt::Display for Action {
             Action::CycleChannelDisplay => {
                 write!(f, "Cycle channel display")
             }
+            Action::SelectView(view) => write!(f, "Switch to {view:?} view"),
+            Action::CycleView => write!(f, "Cycle view"),
             Action::SetDefault => write!(f, "Set default"),
             Action::Help => write!(f, "Show/hide help"),
             Action::Exit => write!(f, "Exit wiremix"),
@@ -704,6 +715,13 @@ impl Handle for Action {
             Action::CycleChannelDisplay => {
                 current_list!(app).cycle_channel_display();
             }
+            Action::SelectView(target) => {
+                current_list!(app).select_view(target, &app.view);
+            }
+            Action::CycleView => {
+                let view_cycle = app.config.view_cycle.clone();
+                current_list!(app).cycle_channel_view(&view_cycle, &app.view);
+            }
             Action::SetAbsoluteVolume(volume) => {
                 let max = app
                     .config
@@ -1011,6 +1029,7 @@ mod tests {
             split_style: Default::default(),
             channel_mode: Default::default(),
             pair_label_style: Default::default(),
+            view_cycle: Default::default(),
             meter_width_percent: 50.0,
             right_margin: Default::default(),
             filters: Default::default(),
@@ -1119,6 +1138,7 @@ mod tests {
             split_style: Default::default(),
             channel_mode: Default::default(),
             pair_label_style: Default::default(),
+            view_cycle: Default::default(),
             meter_width_percent: 50.0,
             right_margin: Default::default(),
             filters: Default::default(),
