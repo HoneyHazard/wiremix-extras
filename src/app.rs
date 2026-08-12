@@ -1033,6 +1033,8 @@ mod tests {
             unified_meter_layout: Default::default(),
             linked_meter_layout: Default::default(),
             channels_meter_layout: Default::default(),
+            expand_unused_label_space: Default::default(),
+            expand_unpaired_channel_bars: Default::default(),
             filters: Default::default(),
         };
 
@@ -1143,6 +1145,8 @@ mod tests {
             unified_meter_layout: Default::default(),
             linked_meter_layout: Default::default(),
             channels_meter_layout: Default::default(),
+            expand_unused_label_space: Default::default(),
+            expand_unpaired_channel_bars: Default::default(),
             filters: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);

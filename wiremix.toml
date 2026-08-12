@@ -118,6 +118,23 @@ view_cycle = [ "unified", "linked", "channels" ]
 # see the Keybindings section below).
 channel_mode = false
 
+# When a row has label space set aside for something it isn't showing
+# this render (a lone stereo pair's row never shows a group label at
+# all; a Unified view row reserves a cycling-index column even on a
+# frame where this particular node isn't imbalanced and so isn't using
+# it), hand that space to the volume bar(s) instead of leaving it
+# blank. Opt-in, off by default - trades the "every row's bar starts/
+# ends at a predictable, consistent column" guarantee for a denser
+# look.
+expand_unused_label_space = false
+
+# An unpaired channel's row in a split_style = "radiating" block
+# normally occupies just the left half of the row (mirroring where a
+# paired row's own left bar would be, so every row in the block lines
+# up); when this is on, it stretches across the row's full remaining
+# width instead. Opt-in, off by default.
+expand_unpaired_channel_bars = false
+
 
 # Keybindings
 #
@@ -241,33 +258,39 @@ keybindings = [
 # Per-view override for how a bar/meter row lays out its volume area,
 # meter area (once peaks isn't "off"), and the blank columns around
 # them - independently configurable per view (see view_cycle above).
-# Any field left unset (the default for all three views) reproduces
-# stock wiremix's own proportional layout for that one segment, so out
-# of the box every view's spacing closely matches classic wiremix.
-# Fields are independent - e.g. you can pin just
-# channels_meter_layout's right_margin while leaving its ratio and gap
-# on their classic, proportional defaults.
+# meter_width_percent left unset (its default for all three views)
+# reproduces stock wiremix's own proportional ratio, so out of the box
+# every view's ratio closely matches classic wiremix. Fields are
+# independent - e.g. you can pin just channels_meter_layout's
+# right_margin while leaving its ratio on its classic, proportional
+# default.
 #
 # meter_width_percent - percentage of the row's combined volume+meter
 #   width given to the meter side (the volume side gets the rest). Must
 #   be between 1 and 99 if set; to hide the meter entirely, use
 #   peaks = "off" instead.
 # gap - blank columns between the volume area and the meter area.
+#   Defaults to a small fixed value (1) rather than stock's wider
+#   proportional gap, universally across all three views - still fully
+#   overridable per view.
 # right_margin - blank columns reserved at the row's right edge.
+#   Defaults to a small fixed value (3, about half of stock's own
+#   proportional right_margin) rather than a proportion, universally
+#   across all three views - still fully overridable per view.
 [unified_meter_layout]
 #meter_width_percent = 50.0
-#gap = 2
-#right_margin = 0
+gap = 1
+right_margin = 3
 
 [linked_meter_layout]
 #meter_width_percent = 50.0
-#gap = 2
-#right_margin = 0
+gap = 1
+right_margin = 3
 
 [channels_meter_layout]
 #meter_width_percent = 50.0
-#gap = 2
-#right_margin = 0
+gap = 1
+right_margin = 3
 
 
 # Names

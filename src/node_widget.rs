@@ -602,8 +602,14 @@ impl StatefulWidget for NodeWidget<'_> {
         // reproduces stock wiremix's own layout exactly - the same
         // proportional Fill(1) gaps stock always used, not the generic,
         // config-driven mechanism every other case (Linked/Channels
-        // always, or a customized Unified) uses below. This is a
-        // deliberate choice to keep the "Unified reproduces stock
+        // always, or a customized Unified) uses below. NOTE: since
+        // gap/right_margin now default to small fixed values rather than
+        // `None` (see `default_gap`/`default_right_margin` in
+        // config.rs), `MeterLayout::default()` can no longer arise from
+        // any real config, so this branch is presently unreachable via
+        // any TOML a user could write - kept in case that changes again
+        // (this exact default has already moved more than once). This is
+        // a deliberate choice to keep the "Unified reproduces stock
         // exactly" guarantee bit-for-bit rather than let it drift by even
         // a column once the general mechanism is involved - Unified is
         // also the only view with no `Stacked`/`Radiating` row ever
@@ -1008,6 +1014,19 @@ impl StatefulWidget for VolumeWidget<'_> {
         let view = self.channel_state.view();
         let cycling =
             self.channel_state.unified_imbalance == UnifiedImbalance::Cycle;
+        // `cycling` (above) says whether unified_imbalance = "cycle" is
+        // *configured*, not whether this particular render is actually
+        // showing an index prefix this frame - a balanced node still
+        // resolves `cycling_channel: None` even with cycling configured
+        // (see `cycling_channel`), so the widened label's extra column
+        // sits unused on every one of its renders. expand_unused_label_space
+        // reclaims that column into the bar on exactly those frames,
+        // trading Unified view's normal "every row's bar starts at the
+        // same column" consistency for a denser look on rows that
+        // aren't using the space anyway.
+        let cycling = cycling
+            && !(self.config.expand_unused_label_space
+                && self.cycling_channel.is_none());
         let label_width = if view == ChannelView::Unified {
             let unified_classic =
                 self.config.meter_layout(view) == MeterLayout::default();
@@ -1198,6 +1217,13 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
 
         let max_volume = self.config.max_volume_percent / 100.0;
 
+        let (label_l_width, label_r_width) =
+            if self.config.expand_unused_label_space {
+                (STEREO_LABEL_L_WIDTH_EXPANDED, STEREO_LABEL_R_WIDTH_EXPANDED)
+            } else {
+                (STEREO_LABEL_L_WIDTH, STEREO_LABEL_R_WIDTH)
+            };
+
         // Two separate Fill(1) constraints can end up with unequal widths
         // when the remaining space is odd (Ratatui's Fill distribution
         // isn't guaranteed symmetric) - identical numerically-equal L/R
@@ -1206,7 +1232,7 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
         // giving both bars the same explicit Length(bar_width) makes that
         // impossible by construction; any odd leftover column is simply
         // unused rather than handed to one side.
-        let fixed_width = STEREO_LABEL_L_WIDTH + STEREO_LABEL_R_WIDTH + 1; // label_l + center + label_r
+        let fixed_width = label_l_width + label_r_width + 1; // label_l + center + label_r
         let spacing_width = 4; // 4 gaps between the 5 segments, at 1 each
         let bar_width =
             area.width.saturating_sub(fixed_width + spacing_width) / 2;
@@ -1214,11 +1240,11 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(STEREO_LABEL_L_WIDTH), // label_l
-                Constraint::Length(bar_width),            // bar_l
-                Constraint::Length(1),                    // center
-                Constraint::Length(bar_width),            // bar_r
-                Constraint::Length(STEREO_LABEL_R_WIDTH), // label_r
+                Constraint::Length(label_l_width), // label_l
+                Constraint::Length(bar_width),     // bar_l
+                Constraint::Length(1),             // center
+                Constraint::Length(bar_width),     // bar_r
+                Constraint::Length(label_r_width), // label_r
             ])
             .spacing(1)
             .split(area);
@@ -1628,6 +1654,22 @@ const STEREO_LABEL_L_WIDTH: u16 = 12;
 /// look visually balanced around the bars.
 const STEREO_LABEL_R_WIDTH: u16 = 6;
 
+/// `STEREO_LABEL_L_WIDTH`, under `expand_unused_label_space` - reclaims
+/// the one column of `label_l`'s own content budget that a plain
+/// `"{percent}%"` never needs (the budget was sized to match
+/// `VOLUME_LABEL_WIDTH`'s cycling-capable content width, a case
+/// `StereoVolumeWidget` never has), handing it to `bar_l`. The folded
+/// alignment padding underneath stays untouched - shrinking past this
+/// would move the bar's start column, not just its own width.
+const STEREO_LABEL_L_WIDTH_EXPANDED: u16 = STEREO_LABEL_L_WIDTH - 1;
+
+/// `STEREO_LABEL_R_WIDTH`, under `expand_unused_label_space` - reclaims
+/// the same one column `STEREO_LABEL_L_WIDTH_EXPANDED` does, handed to
+/// `bar_r`, so `bar_l`/`bar_r` stay the same width as each other (see
+/// the "two separate Fill(1) constraints" comment in
+/// `StereoVolumeWidget::render` for why that symmetry matters).
+const STEREO_LABEL_R_WIDTH_EXPANDED: u16 = STEREO_LABEL_R_WIDTH - 1;
+
 /// One row within a `Stacked` block, in the shared column grid a
 /// `split_style = "radiating"` context uses for every row alike: label |
 /// left/unpaired % | left/unpaired bar | divider-or-blank | right
@@ -1736,24 +1778,40 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
 
         let max_volume = self.config.max_volume_percent / 100.0;
 
+        // An unpaired channel's row normally reserves (but leaves
+        // blank) the divider/right-bar/right-label columns, so every
+        // row in the block agrees on where the bar starts and ends -
+        // see the module doc comment on `RadiatingRowWidget`.
+        // expand_unpaired_channel_bars trades that cross-row agreement
+        // away for a denser look: bar_l stretches across all of the
+        // reclaimed space instead, since there's no second channel here
+        // that would ever need it.
+        let expand_unpaired = self.config.expand_unpaired_channel_bars
+            && self.right_index.is_none();
+
         let layout = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(RADIATING_LABEL_WIDTH), // label
-                Constraint::Length(4),                     // label_l
-                Constraint::Length(self.bar_width),        // bar_l
-                Constraint::Length(1),                     // center
-                Constraint::Length(self.bar_width),        // bar_r
-                Constraint::Length(4),                     // label_r
-            ])
+            .constraints(if expand_unpaired {
+                vec![
+                    Constraint::Length(RADIATING_LABEL_WIDTH), // label
+                    Constraint::Length(4),                     // label_l
+                    Constraint::Min(0),                        // bar_l
+                ]
+            } else {
+                vec![
+                    Constraint::Length(RADIATING_LABEL_WIDTH), // label
+                    Constraint::Length(4),                     // label_l
+                    Constraint::Length(self.bar_width),        // bar_l
+                    Constraint::Length(1),                     // center
+                    Constraint::Length(self.bar_width),        // bar_r
+                    Constraint::Length(4),                     // label_r
+                ]
+            })
             .spacing(1)
             .split(row_area);
         let label_area = layout[0];
         let label_l = layout[1];
         let bar_l = layout[2];
-        let center = layout[3];
-        let bar_r = layout[4];
-        let label_r = layout[5];
 
         Line::from(Span::styled(
             radiating_row_label(
@@ -1807,7 +1865,8 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         ));
 
         // The divider/right-bar/right-label columns simply stay blank
-        // for an unpaired channel - they're still reserved above so
+        // for an unpaired channel - reserved above (unless
+        // expand_unpaired_channel_bars handed them to bar_l instead) so
         // every row in the block agrees on where the bar starts, but
         // there's no second channel here to show anything in them.
         let Some(right_index) = self.right_index else {
@@ -1847,6 +1906,11 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
             }
             return;
         };
+        // right_index is Some, so expand_unpaired was false above and
+        // the layout used all 6 constraints.
+        let center = layout[3];
+        let bar_r = layout[4];
+        let label_r = layout[5];
 
         let right_volume =
             volumes.get(right_index).copied().unwrap_or(0.0).cbrt();
@@ -2238,6 +2302,48 @@ mod tests {
     }
 
     #[test]
+    fn expand_unused_label_space_widens_a_lone_stereo_pairs_bars() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
+
+        let narrow_config = config::Config::from_toml_str(
+            "channel_display = \"always\"\nmax_volume_percent = 100.0",
+        );
+        let expanded_config = config::Config::from_toml_str(
+            "channel_display = \"always\"\nmax_volume_percent = 100.0\n\
+             expand_unused_label_space = true",
+        );
+
+        let count_filled = |config: &Config| -> (usize, usize) {
+            let rendered = render_to_string(config, &node);
+            let filled = config.char_set.volume_filled.as_str();
+            let center_index =
+                rendered.find('|').expect("center marker present");
+            (
+                rendered[..center_index].matches(filled).count(),
+                rendered[center_index + 1..].matches(filled).count(),
+            )
+        };
+
+        let (narrow_left, narrow_right) = count_filled(&narrow_config);
+        let (wide_left, wide_right) = count_filled(&expanded_config);
+
+        assert_eq!(
+            wide_left,
+            narrow_left + 1,
+            "expand_unused_label_space should reclaim exactly the 1 \
+             column label_l's own content budget never needed"
+        );
+        assert_eq!(
+            wide_right,
+            narrow_right + 1,
+            "label_r reclaims the matching column so bar_l/bar_r stay \
+             equal-width"
+        );
+    }
+
+    #[test]
     fn single_pair_finds_a_lone_named_lr_pair() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
@@ -2307,26 +2413,26 @@ mod tests {
     }
 
     #[test]
-    fn unified_view_volume_label_matches_stock_width_and_widens_only_for_cycle()
-    {
-        // True Unified view (default config - channel_display =
-        // "unified", unified_imbalance = "none") reproduces stock
-        // wiremix's own VolumeWidget label width (5, "{percent}%")
-        // exactly - the bar should start right after label(5) +
-        // spacing(1) = column 6. Only unified_imbalance = "cycle"
-        // widens it by the one extra column "{index} {percent}%" needs.
+    fn unified_view_volume_label_widens_only_for_cycle() {
+        // Default config (channel_display = "unified", unified_imbalance
+        // = "none") now carries small non-`None` gap/right_margin
+        // defaults (see default_gap/default_right_margin in config.rs),
+        // so it no longer takes the literal-stock fast path - the bar
+        // starts right after the customized label (7) + spacing(1) =
+        // column 8. Only unified_imbalance = "cycle" widens it by the
+        // one extra column "{index} {percent}%" needs.
         let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
         let node = test_node(Some(vec![mono]), vec![1.0]);
 
-        let stock_config = config::Config::from_toml_str("");
-        let stock_rendered = render_to_string(&stock_config, &node);
-        let bar_start = stock_rendered
-            .find(stock_config.char_set.volume_filled.as_str())
+        let default_config = config::Config::from_toml_str("");
+        let default_rendered = render_to_string(&default_config, &node);
+        let bar_start = default_rendered
+            .find(default_config.char_set.volume_filled.as_str())
             .expect("a filled bar somewhere");
         assert_eq!(
-            bar_start, 6,
-            "stock Unified view's bar should start at column 6 (5-wide \
-             label + 1 spacing), matching real stock wiremix exactly"
+            bar_start, 8,
+            "default Unified view's bar should start at column 8 \
+             (7-wide customized label + 1 spacing)"
         );
 
         let cycle_config =
@@ -2336,9 +2442,37 @@ mod tests {
             .find(cycle_config.char_set.volume_filled.as_str())
             .expect("a filled bar somewhere");
         assert_eq!(
-            cycle_bar_start, 7,
+            cycle_bar_start, 9,
             "unified_imbalance = \"cycle\" should widen the label by \
              exactly the one column it needs, not more"
+        );
+    }
+
+    #[test]
+    fn expand_unused_label_space_reclaims_the_unused_cycle_column() {
+        // Same mono node/cycle config as
+        // unified_view_volume_label_widens_only_for_cycle - a mono node
+        // can never be imbalanced (nothing to differ from), so
+        // cycling_channel is None here even with unified_imbalance =
+        // "cycle" configured (see cycling_channel_none_when_balanced).
+        // expand_unused_label_space should notice the reserved index
+        // column is going unused on this render and reclaim it, landing
+        // back on the same column the non-cycling case uses.
+        let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
+        let node = test_node(Some(vec![mono]), vec![1.0]);
+
+        let config = config::Config::from_toml_str(
+            "unified_imbalance = \"cycle\"\nexpand_unused_label_space = true",
+        );
+        let rendered = render_to_string(&config, &node);
+        let bar_start = rendered
+            .find(config.char_set.volume_filled.as_str())
+            .expect("a filled bar somewhere");
+        assert_eq!(
+            bar_start, 8,
+            "a non-imbalanced (here, mono) node's unused cycling column \
+             should be reclaimed, landing on the same column the \
+             non-cycling case uses"
         );
     }
 
@@ -3081,6 +3215,52 @@ mod tests {
             pair_row_bar_start, single_row_bar_start,
             "an unpaired row's bar must start at the same column as a \
              paired row's left bar"
+        );
+    }
+
+    #[test]
+    fn expand_unpaired_channel_bars_stretches_into_the_freed_space() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        let node = test_node(Some(vec![fl, fr, fc]), vec![1.0, 1.0, 1.0]);
+
+        let narrow_config = config::Config::from_toml_str(
+            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+             peaks = \"off\"\nmax_volume_percent = 100.0",
+        );
+        let expanded_config = config::Config::from_toml_str(
+            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+             peaks = \"off\"\nmax_volume_percent = 100.0\n\
+             expand_unpaired_channel_bars = true",
+        );
+        let filled = narrow_config.char_set.volume_filled.as_str();
+
+        let narrow_lines =
+            render_node_lines(&narrow_config, &node, false, false, None);
+        let expanded_lines =
+            render_node_lines(&expanded_config, &node, false, false, None);
+
+        let unpaired_bar_end = |lines: &[String]| -> usize {
+            lines[2].rfind(filled).expect("FC's bar is fully filled")
+        };
+        assert!(
+            unpaired_bar_end(&expanded_lines) > unpaired_bar_end(&narrow_lines),
+            "expand_unpaired_channel_bars should let the unpaired row's \
+             bar reach further right than the paired-row-matching half \
+             width"
+        );
+
+        let paired_bar_end = |lines: &[String]| -> usize {
+            lines[1]
+                .rfind(filled)
+                .expect("FL/FR's bars are fully filled")
+        };
+        assert_eq!(
+            paired_bar_end(&narrow_lines),
+            paired_bar_end(&expanded_lines),
+            "expand_unpaired_channel_bars must not affect a paired row's \
+             own width"
         );
     }
 
