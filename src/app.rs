@@ -1030,8 +1030,9 @@ mod tests {
             channel_mode: Default::default(),
             pair_label_style: Default::default(),
             view_cycle: Default::default(),
-            meter_width_percent: 50.0,
-            right_margin: Default::default(),
+            unified_meter_layout: Default::default(),
+            linked_meter_layout: Default::default(),
+            channels_meter_layout: Default::default(),
             filters: Default::default(),
         };
 
@@ -1139,8 +1140,9 @@ mod tests {
             channel_mode: Default::default(),
             pair_label_style: Default::default(),
             view_cycle: Default::default(),
-            meter_width_percent: 50.0,
-            right_margin: Default::default(),
+            unified_meter_layout: Default::default(),
+            linked_meter_layout: Default::default(),
+            channels_meter_layout: Default::default(),
             filters: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);

@@ -80,19 +80,60 @@ pub struct Config {
     /// cycling without disabling it entirely; it's still reachable via
     /// `Action::SelectView`. Must be non-empty.
     pub view_cycle: Vec<ChannelView>,
-    /// Percentage of a bar/meter row's combined volume+meter content width
-    /// given to the meter side once `peaks` is on (the volume side gets
-    /// the rest) - applies uniformly everywhere a meter is drawn: the
-    /// classic single-row path and every row of a `Stacked`/`Radiating`
-    /// block alike, since they all derive their split from this same
-    /// setting.
-    pub meter_width_percent: f32,
-    /// Blank columns reserved at the right edge of every bar/meter row,
-    /// classic or split, whether or not `peaks` is on. Defaults to 0 -
-    /// volume/meter content uses the full available width instead of
-    /// leaving an unconfigurable margin behind.
-    pub right_margin: u16,
+    /// Bar/meter row layout for `Unified` view - see `MeterLayout`.
+    pub unified_meter_layout: MeterLayout,
+    /// Bar/meter row layout for `Linked` view - see `MeterLayout`.
+    pub linked_meter_layout: MeterLayout,
+    /// Bar/meter row layout for `Channels` view - see `MeterLayout`.
+    pub channels_meter_layout: MeterLayout,
     pub filters: Vec<MatchCondition>,
+}
+
+/// Overrides for one view's bar/meter row layout: the percentage of a
+/// row's combined volume+meter width given to the meter side, the blank
+/// gap between them, and the blank margin reserved at the row's right
+/// edge (all once `peaks` is on - `gap`/`meter_width_percent` are moot
+/// with `peaks = "off"`, nothing to gap/split against). Each field left
+/// `None` (the default) reproduces stock wiremix's own proportional
+/// layout for that one segment; setting it opts that one field, for that
+/// one view, into a fixed-column override instead - the three fields and
+/// three views are all independent of each other. See
+/// `Config::meter_layout` for how a render picks which of the three
+/// (one per `ChannelView`) applies.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MeterLayout {
+    pub meter_width_percent: Option<f32>,
+    pub gap: Option<u16>,
+    pub right_margin: Option<u16>,
+}
+
+// This is what actually gets parsed from the config - see `MeterLayout`.
+#[derive(Deserialize, Debug, Clone, Copy, Default)]
+#[cfg_attr(test, derive(PartialEq))]
+#[serde(deny_unknown_fields, default)]
+struct MeterLayoutFile {
+    meter_width_percent: Option<f32>,
+    gap: Option<u16>,
+    right_margin: Option<u16>,
+}
+
+impl MeterLayoutFile {
+    fn validate(self, label: &str) -> anyhow::Result<MeterLayout> {
+        if let Some(percent) = self.meter_width_percent {
+            if !(1.0..=99.0).contains(&percent) {
+                anyhow::bail!(
+                    "{label}.meter_width_percent {percent} must be \
+                     between 1 and 99 - to hide the meter entirely, use \
+                     peaks = \"off\" instead"
+                );
+            }
+        }
+        Ok(MeterLayout {
+            meter_width_percent: self.meter_width_percent,
+            gap: self.gap,
+            right_margin: self.right_margin,
+        })
+    }
 }
 
 /// Represents a configuration deserialized from a file. This gets baked into a
@@ -148,10 +189,12 @@ struct ConfigFile {
     pair_label_style: Option<PairLabelStyle>,
     #[serde(default = "default_view_cycle")]
     view_cycle: Vec<ChannelView>,
-    #[serde(default = "default_meter_width_percent")]
-    meter_width_percent: Option<f32>,
-    #[serde(default = "default_right_margin")]
-    right_margin: u16,
+    #[serde(default)]
+    unified_meter_layout: MeterLayoutFile,
+    #[serde(default)]
+    linked_meter_layout: MeterLayoutFile,
+    #[serde(default)]
+    channels_meter_layout: MeterLayoutFile,
     #[serde(default = "Filter::defaults", deserialize_with = "Filter::merge")]
     filters: Vec<Filter>,
 }
@@ -500,14 +543,6 @@ fn default_view_cycle() -> Vec<ChannelView> {
     ]
 }
 
-fn default_meter_width_percent() -> Option<f32> {
-    Some(50.0)
-}
-
-fn default_right_margin() -> u16 {
-    0
-}
-
 impl ConfigFile {
     /// Override configuration with command-line arguments.
     pub fn apply_opt(&mut self, opt: &Opt) {
@@ -626,15 +661,15 @@ impl TryFrom<ConfigFile> for Config {
             }
         }
 
-        if let Some(meter_width_percent) = config_file.meter_width_percent {
-            if !(1.0..=99.0).contains(&meter_width_percent) {
-                anyhow::bail!(
-                    "meter_width_percent {meter_width_percent} must be \
-                     between 1 and 99 - to hide the meter entirely, use \
-                     peaks = \"off\" instead"
-                );
-            }
-        }
+        let unified_meter_layout = config_file
+            .unified_meter_layout
+            .validate("unified_meter_layout")?;
+        let linked_meter_layout = config_file
+            .linked_meter_layout
+            .validate("linked_meter_layout")?;
+        let channels_meter_layout = config_file
+            .channels_meter_layout
+            .validate("channels_meter_layout")?;
 
         if config_file.tabs.is_empty() {
             anyhow::bail!("tabs must be non-empty");
@@ -680,16 +715,25 @@ impl TryFrom<ConfigFile> for Config {
             channel_mode: config_file.channel_mode,
             pair_label_style: config_file.pair_label_style.unwrap_or_default(),
             view_cycle: config_file.view_cycle,
-            meter_width_percent: config_file
-                .meter_width_percent
-                .unwrap_or_default(),
-            right_margin: config_file.right_margin,
+            unified_meter_layout,
+            linked_meter_layout,
+            channels_meter_layout,
             filters,
         })
     }
 }
 
 impl Config {
+    /// This view's `MeterLayout` overrides - see `MeterLayout`'s own doc
+    /// comment.
+    pub fn meter_layout(&self, view: ChannelView) -> MeterLayout {
+        match view {
+            ChannelView::Unified => self.unified_meter_layout,
+            ChannelView::Linked => self.linked_meter_layout,
+            ChannelView::Channels => self.channels_meter_layout,
+        }
+    }
+
     /// Returns the configuration file path.
     pub fn default_path() -> Option<PathBuf> {
         if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
@@ -775,8 +819,9 @@ pub mod strict {
         channel_mode: bool,
         pair_label_style: Option<PairLabelStyle>,
         view_cycle: Vec<ChannelView>,
-        meter_width_percent: Option<f32>,
-        right_margin: u16,
+        unified_meter_layout: MeterLayoutFile,
+        linked_meter_layout: MeterLayoutFile,
+        channels_meter_layout: MeterLayoutFile,
         filters: Vec<Filter>,
     }
 
@@ -804,8 +849,9 @@ pub mod strict {
                 channel_mode: strict.channel_mode,
                 pair_label_style: strict.pair_label_style,
                 view_cycle: strict.view_cycle,
-                meter_width_percent: strict.meter_width_percent,
-                right_margin: strict.right_margin,
+                unified_meter_layout: strict.unified_meter_layout,
+                linked_meter_layout: strict.linked_meter_layout,
+                channels_meter_layout: strict.channels_meter_layout,
                 filters: strict.filters,
             }
         }
@@ -1077,13 +1123,16 @@ mod tests {
     }
 
     #[test]
-    fn meter_width_percent_out_of_range_is_error() {
+    fn meter_layout_percent_out_of_range_is_error() {
         let too_low: ConfigFile =
-            toml::from_str("meter_width_percent = 0.0").unwrap();
+            toml::from_str("[linked_meter_layout]\nmeter_width_percent = 0.0")
+                .unwrap();
         assert!(Config::try_from(too_low).is_err());
 
-        let too_high: ConfigFile =
-            toml::from_str("meter_width_percent = 100.0").unwrap();
+        let too_high: ConfigFile = toml::from_str(
+            "[channels_meter_layout]\nmeter_width_percent = 100.0",
+        )
+        .unwrap();
         assert!(Config::try_from(too_high).is_err());
     }
 
@@ -1115,16 +1164,49 @@ mod tests {
     }
 
     #[test]
-    fn meter_width_percent_and_right_margin_default_and_configure() {
+    fn meter_layout_defaults_to_unset_and_is_configurable_per_view() {
         let default = Config::from_toml_str("");
-        assert_eq!(default.meter_width_percent, 50.0);
-        assert_eq!(default.right_margin, 0);
+        assert_eq!(
+            default.meter_layout(ChannelView::Unified),
+            MeterLayout::default()
+        );
+        assert_eq!(
+            default.meter_layout(ChannelView::Linked),
+            MeterLayout::default()
+        );
+        assert_eq!(
+            default.meter_layout(ChannelView::Channels),
+            MeterLayout::default()
+        );
 
         let configured = Config::from_toml_str(
-            "meter_width_percent = 30.0\nright_margin = 4",
+            "[linked_meter_layout]\n\
+             meter_width_percent = 30.0\n\
+             right_margin = 4\n\
+             [channels_meter_layout]\n\
+             gap = 3",
         );
-        assert_eq!(configured.meter_width_percent, 30.0);
-        assert_eq!(configured.right_margin, 4);
+        assert_eq!(
+            configured.meter_layout(ChannelView::Unified),
+            MeterLayout::default(),
+            "unified_meter_layout wasn't touched, must stay unset"
+        );
+        assert_eq!(
+            configured.meter_layout(ChannelView::Linked),
+            MeterLayout {
+                meter_width_percent: Some(30.0),
+                gap: None,
+                right_margin: Some(4),
+            }
+        );
+        assert_eq!(
+            configured.meter_layout(ChannelView::Channels),
+            MeterLayout {
+                meter_width_percent: None,
+                gap: Some(3),
+                right_margin: None,
+            }
+        );
     }
 
     #[test]

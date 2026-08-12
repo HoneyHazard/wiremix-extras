@@ -106,18 +106,6 @@ pair_label_style = "verbose"
 # reachable directly via Action::SelectView. Must be non-empty.
 view_cycle = [ "unified", "linked", "channels" ]
 
-# Percentage of a bar/meter row's combined volume+meter content width
-# given to the meter side once peaks is not "off" (the volume side gets
-# the rest). Applies everywhere a meter is drawn - the classic single-row
-# path and every row of a split (radiating/stacked) block alike. Must be
-# between 1 and 99; to hide the meter entirely, use peaks = "off" instead.
-meter_width_percent = 50.0
-
-# Blank columns reserved at the right edge of every bar/meter row,
-# classic or split, whether or not peaks is on. 0 (today's default) lets
-# volume/meter content use the full available row width.
-right_margin = 0
-
 # Whether volume keys (h/l, Left/Right, 0-9, etc.) adjust every channel
 # of the selected item together (false, linked/ganged - today's default)
 # or only the individually-cursored channel (true, "Channel mode").
@@ -246,6 +234,40 @@ keybindings = [
  # first for their own tab/pane/word-jump bindings. Pick different keys
  # if these don't seem to work in your setup.
 ]
+
+
+# Meter Layout
+#
+# Per-view override for how a bar/meter row lays out its volume area,
+# meter area (once peaks isn't "off"), and the blank columns around
+# them - independently configurable per view (see view_cycle above).
+# Any field left unset (the default for all three views) reproduces
+# stock wiremix's own proportional layout for that one segment, so out
+# of the box every view's spacing closely matches classic wiremix.
+# Fields are independent - e.g. you can pin just
+# channels_meter_layout's right_margin while leaving its ratio and gap
+# on their classic, proportional defaults.
+#
+# meter_width_percent - percentage of the row's combined volume+meter
+#   width given to the meter side (the volume side gets the rest). Must
+#   be between 1 and 99 if set; to hide the meter entirely, use
+#   peaks = "off" instead.
+# gap - blank columns between the volume area and the meter area.
+# right_margin - blank columns reserved at the row's right edge.
+[unified_meter_layout]
+#meter_width_percent = 50.0
+#gap = 2
+#right_margin = 0
+
+[linked_meter_layout]
+#meter_width_percent = 50.0
+#gap = 2
+#right_margin = 0
+
+[channels_meter_layout]
+#meter_width_percent = 50.0
+#gap = 2
+#right_margin = 0
 
 
 # Names
