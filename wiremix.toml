@@ -118,15 +118,11 @@ view_cycle = [ "unified", "linked", "channels" ]
 # see the Keybindings section below).
 channel_mode = false
 
-# When a row has label space set aside for something it isn't showing
-# this render (a lone stereo pair's row never shows a group label at
-# all; a Unified view row reserves a cycling-index column even on a
-# frame where this particular node isn't imbalanced and so isn't using
-# it), hand that space to the volume bar(s) instead of leaving it
-# blank. Opt-in, off by default - trades the "every row's bar starts/
-# ends at a predictable, consistent column" guarantee for a denser
-# look.
-expand_unused_label_space = false
+# A lone stereo pair's row never shows a group label at all (unlike a
+# multi-row block's own rows) - hand the one column of label space a
+# plain percentage never needs to the volume bars instead of leaving it
+# blank. On by default.
+expand_unused_label_space = true
 
 # An unpaired channel's row in a split_style = "radiating" block
 # normally occupies just the left half of the row (mirroring where a
@@ -268,28 +264,29 @@ keybindings = [
 # meter_width_percent - percentage of the row's combined volume+meter
 #   width given to the meter side (the volume side gets the rest). Must
 #   be between 1 and 99 if set; to hide the meter entirely, use
-#   peaks = "off" instead.
-# gap - blank columns between the volume area and the meter area.
-#   Defaults to a small fixed value (1) rather than stock's wider
-#   proportional gap, universally across all three views - still fully
-#   overridable per view.
-# right_margin - blank columns reserved at the row's right edge.
-#   Defaults to a small fixed value (3, about half of stock's own
-#   proportional right_margin) rather than a proportion, universally
-#   across all three views - still fully overridable per view.
+#   peaks = "off" instead. Applied before gap/right_margin, so widening
+#   either of those never costs the volume side any width.
+# gap - blank columns between the volume area and the meter area,
+#   carved out of the meter side alone. Small by default (2), universally
+#   across all three views - still fully overridable per view, including
+#   to 0.
+# right_margin - blank columns reserved at the row's right edge, also
+#   carved out of the meter side alone. Small by default (3), universally
+#   across all three views - still fully overridable per view, including
+#   to 0.
 [unified_meter_layout]
 #meter_width_percent = 50.0
-gap = 1
+gap = 2
 right_margin = 3
 
 [linked_meter_layout]
 #meter_width_percent = 50.0
-gap = 1
+gap = 2
 right_margin = 3
 
 [channels_meter_layout]
 #meter_width_percent = 50.0
-gap = 1
+gap = 2
 right_margin = 3
 
 

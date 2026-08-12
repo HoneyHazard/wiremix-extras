@@ -86,16 +86,11 @@ pub struct Config {
     pub linked_meter_layout: MeterLayout,
     /// Bar/meter row layout for `Channels` view - see `MeterLayout`.
     pub channels_meter_layout: MeterLayout,
-    /// Opt-in, default off. When a row has unused label space set aside
-    /// for something it isn't showing this render (a lone stereo pair's
-    /// `StereoVolumeWidget` never needs a group label the way a
-    /// multi-row block's `RadiatingRowWidget` does; a `Unified`-view
-    /// `VolumeWidget` reserves a cycling-index column even on a frame
-    /// where this particular node isn't imbalanced and so isn't using
-    /// it), hand that space to the volume bar(s) instead of leaving it
-    /// blank. Trades the "every row's bar starts/ends at a predictable,
-    /// consistent column" guarantee for a denser look - see
-    /// NOTES-multichannel.md.
+    /// Configurable, default on. A lone stereo pair's `StereoVolumeWidget`
+    /// (the classic single-row fast path - it never shows a group label
+    /// the way a multi-row block's `RadiatingRowWidget` does) hands the
+    /// one column of its own label area that a plain `"{percent}%"`
+    /// never needs to the volume bar(s) instead of leaving it blank.
     pub expand_unused_label_space: bool,
     /// Opt-in, default off. An unpaired channel's row in a
     /// `split_style = "radiating"` block normally occupies just the left
@@ -114,17 +109,18 @@ pub struct Config {
 /// with `peaks = "off"`, nothing to gap/split against). `meter_width_percent`
 /// left `None` (its default) reproduces stock wiremix's own proportional
 /// ratio; setting it opts that one field, for that one view, into a
-/// fixed-column override instead. `gap`/`right_margin` default to small
-/// fixed values (see `default_gap`/`default_right_margin`) rather than
-/// stock's wider proportional ones, universally across all three views -
-/// still fully overridable per view. The three fields and three views
-/// are all independent of each other. See `Config::meter_layout` for how
-/// a render picks which of the three (one per `ChannelView`) applies.
+/// fixed-column override instead. `gap`/`right_margin` are always fixed
+/// column counts (never proportional) - both are carved out of the
+/// meter/monitor side's own share of the row, not the volume side's, so
+/// widening either never costs the volume area any width. The three
+/// fields and three views are all independent of each other. See
+/// `Config::meter_layout` for how a render picks which of the three (one
+/// per `ChannelView`) applies.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct MeterLayout {
     pub meter_width_percent: Option<f32>,
-    pub gap: Option<u16>,
-    pub right_margin: Option<u16>,
+    pub gap: u16,
+    pub right_margin: u16,
 }
 
 // This is what actually gets parsed from the config - see `MeterLayout`.
@@ -134,23 +130,22 @@ pub struct MeterLayout {
 struct MeterLayoutFile {
     meter_width_percent: Option<f32>,
     #[serde(default = "default_gap")]
-    gap: Option<u16>,
+    gap: u16,
     #[serde(default = "default_right_margin")]
-    right_margin: Option<u16>,
+    right_margin: u16,
 }
 
-// A small fixed gap by default (rather than stock's wider proportional
-// one), for all three views - still fully overridable per view with any
-// other fixed value.
-fn default_gap() -> Option<u16> {
-    Some(1)
+// A small gap by default, carved from the meter side alone - still
+// fully overridable per view with any other fixed value, including 0.
+fn default_gap() -> u16 {
+    2
 }
 
-// About half of stock's own proportional right_margin (measured live at
-// ~6 columns in a typical terminal), as a small fixed value rather than
-// a proportion - still fully overridable per view.
-fn default_right_margin() -> Option<u16> {
-    Some(3)
+// About half of the default gap's own trailing counterpart - a small
+// margin by default, carved from the meter side alone - still fully
+// overridable per view with any other fixed value, including 0.
+fn default_right_margin() -> u16 {
+    3
 }
 
 impl Default for MeterLayoutFile {
@@ -582,7 +577,7 @@ fn default_channel_mode() -> bool {
 }
 
 fn default_expand_unused_label_space() -> bool {
-    false
+    true
 }
 
 fn default_expand_unpaired_channel_bars() -> bool {
@@ -1239,8 +1234,8 @@ mod tests {
         // three views.
         let stock_default = MeterLayout {
             meter_width_percent: None,
-            gap: Some(1),
-            right_margin: Some(3),
+            gap: 2,
+            right_margin: 3,
         };
         let default = Config::from_toml_str("");
         assert_eq!(default.meter_layout(ChannelView::Unified), stock_default);
@@ -1264,16 +1259,16 @@ mod tests {
             configured.meter_layout(ChannelView::Linked),
             MeterLayout {
                 meter_width_percent: Some(30.0),
-                gap: Some(1),
-                right_margin: Some(4),
+                gap: 2,
+                right_margin: 4,
             }
         );
         assert_eq!(
             configured.meter_layout(ChannelView::Channels),
             MeterLayout {
                 meter_width_percent: None,
-                gap: Some(5),
-                right_margin: Some(3),
+                gap: 5,
+                right_margin: 3,
             }
         );
     }

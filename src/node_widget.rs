@@ -144,22 +144,17 @@ fn display_rows(
 /// version, in the 0.5-2s range floated during design.
 const CYCLE_INTERVAL_SECONDS: f32 = 1.5;
 
-/// The 4 constraints for a bar/meter row's horizontal split - volume
-/// area, gap, meter area, right margin - for a given view's
-/// `MeterLayout`. Every field left unset in `layout` reproduces stock
-/// wiremix's own literal proportions (`Fill(4)`/`Fill(1)`/`Fill(4)`/
-/// `Fill(1)`, a `4:1:4:1` ratio) *exactly*, regardless of what the
-/// *other* fields are set to - the gap/margin weight is derived from
-/// the current volume+meter weight sum (always exactly `8` when the
-/// ratio is unset, or `100` when it's a configured percent), not
-/// hardcoded to `1`, specifically so a custom ratio doesn't silently
-/// shrink the gap/margin's own visible proportion of the row as a side
-/// effect (ratatui's `Fill` distributes proportionally across *every*
-/// `Fill` segment in the whole constraint list, not scoped pairs - a
-/// hardcoded `Fill(1)` gap next to e.g. `Fill(80)`/`Fill(20)` volume/
-/// meter weights would end up a barely-visible sliver instead of
-/// stock's real `1-part-in-8` proportion).
-fn meter_row_constraints(layout: MeterLayout) -> [Constraint; 4] {
+/// Splits a bar/meter row into its `volume_area` and `meter_area` for a
+/// given view's `MeterLayout`. The volume:meter ratio (`meter_width_percent`,
+/// or stock's own `4:4` when unset) is applied first, as a pure two-way
+/// `Fill` split with nothing else in the list - so `gap`/`right_margin`
+/// can never shrink the volume side's own share, only the meter side's,
+/// regardless of how wide either is set to. `gap`/`right_margin` are
+/// then carved out of the meter side alone as fixed-`Length` blank
+/// columns (leading/trailing respectively), which is also why they're
+/// plain `u16` rather than `Option` - there's no "proportional" mode
+/// left for either to fall back to.
+fn split_meter_row(area: Rect, layout: MeterLayout) -> (Rect, Rect) {
     let (volume_weight, meter_weight) = match layout.meter_width_percent {
         Some(percent) => {
             let meter = percent.round() as u16;
@@ -167,32 +162,38 @@ fn meter_row_constraints(layout: MeterLayout) -> [Constraint; 4] {
         }
         None => (4, 4), // stock's literal Fill(4)/Fill(4)
     };
-    let combined = volume_weight + meter_weight; // always 8 or 100
-    let unset_weight = combined.div_ceil(8).max(1); // stock's 1-in-8 ratio
-    let gap = layout
-        .gap
-        .map_or(Constraint::Fill(unset_weight), Constraint::Length);
-    let margin = layout
-        .right_margin
-        .map_or(Constraint::Fill(unset_weight), Constraint::Length);
-    [
-        Constraint::Fill(volume_weight),
-        gap,
-        Constraint::Fill(meter_weight),
-        margin,
-    ]
+    let sides = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Fill(volume_weight),
+            Constraint::Fill(meter_weight),
+        ])
+        .split(area);
+    let volume_area = sides[0];
+    let meter_side = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(layout.gap),
+            Constraint::Min(0),
+            Constraint::Length(layout.right_margin),
+        ])
+        .split(sides[1]);
+    (volume_area, meter_side[1])
 }
 
-/// The 2 constraints for a bar-only row's horizontal split (`peaks =
-/// "off"`, nothing to gap/split a meter against) - volume area, right
-/// margin. Same "unset reproduces stock exactly" rule as
-/// `meter_row_constraints`: stock's own literal ratio here is
-/// `Fill(9)`/`Fill(1)`.
-fn peaks_off_row_constraints(layout: MeterLayout) -> [Constraint; 2] {
-    let margin = layout
-        .right_margin
-        .map_or(Constraint::Fill(1), Constraint::Length);
-    [Constraint::Fill(9), margin]
+/// The `volume_area` for a bar-only row (`peaks = "off"`, nothing to gap
+/// or split a meter against) - the whole row, minus `right_margin`
+/// carved off its trailing edge. Unlike `split_meter_row`, `right_margin`
+/// here necessarily comes out of the volume side, since there's no
+/// meter side to carve it from instead.
+fn peaks_off_volume_area(area: Rect, layout: MeterLayout) -> Rect {
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(layout.right_margin),
+        ])
+        .split(area)[0]
 }
 
 /// Which channel `unified_imbalance = "cycle"` should show right now for
@@ -499,16 +500,11 @@ impl<'a> NodeWidget<'a> {
         row_area: Rect,
     ) -> u16 {
         let layout = config.meter_layout(view);
-        let constraints: Vec<Constraint> = if config.peaks == Peaks::Off {
-            peaks_off_row_constraints(layout).into()
+        if config.peaks == Peaks::Off {
+            peaks_off_volume_area(row_area, layout).width
         } else {
-            meter_row_constraints(layout).into()
-        };
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(constraints)
-            .split(row_area)[0]
-            .width
+            split_meter_row(row_area, layout).0.width
+        }
     }
 }
 
@@ -597,53 +593,15 @@ impl StatefulWidget for NodeWidget<'_> {
             mouse_areas,
         );
 
-        // Unified view (channel_mode off, channel_display = "unified"),
-        // left at its own default `MeterLayout` (nothing overridden),
-        // reproduces stock wiremix's own layout exactly - the same
-        // proportional Fill(1) gaps stock always used, not the generic,
-        // config-driven mechanism every other case (Linked/Channels
-        // always, or a customized Unified) uses below. NOTE: since
-        // gap/right_margin now default to small fixed values rather than
-        // `None` (see `default_gap`/`default_right_margin` in
-        // config.rs), `MeterLayout::default()` can no longer arise from
-        // any real config, so this branch is presently unreachable via
-        // any TOML a user could write - kept in case that changes again
-        // (this exact default has already moved more than once). This is
-        // a deliberate choice to keep the "Unified reproduces stock
-        // exactly" guarantee bit-for-bit rather than let it drift by even
-        // a column once the general mechanism is involved - Unified is
-        // also the only view with no `Stacked`/`Radiating` row ever
-        // appearing alongside a plain `VolumeWidget` row under stock
-        // settings (unified_imbalance = "none"), so it has no need to
-        // stay column-aligned with anything else the way Linked/Channels
-        // do even once customized - see `ChannelState::view`.
+        // Every view (including Unified) shares the same generic
+        // volume/meter split now - see `split_meter_row`/
+        // `peaks_off_volume_area`.
         let view = self.channel_state.view();
         let meter_layout = self.config.meter_layout(view);
-        let unified_classic = view == ChannelView::Unified
-            && meter_layout == MeterLayout::default();
 
         // Render volume bar and (if enabled) peak meter
         if self.config.peaks == Peaks::Off {
-            let layout = if unified_classic {
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints(vec![
-                        Constraint::Length(2), // _padding (stock)
-                        Constraint::Fill(9),   // volume_area
-                        Constraint::Fill(1),   // _padding
-                    ])
-                    .split(bar_area)
-            } else {
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints(peaks_off_row_constraints(meter_layout))
-                    .split(bar_area)
-            };
-            let volume_area = if unified_classic {
-                layout[1]
-            } else {
-                layout[0]
-            };
+            let volume_area = peaks_off_volume_area(bar_area, meter_layout);
 
             render_volume(
                 self.config,
@@ -658,28 +616,8 @@ impl StatefulWidget for NodeWidget<'_> {
                 mouse_areas,
             );
         } else {
-            let layout = if unified_classic {
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints(vec![
-                        Constraint::Length(2), // _padding (stock)
-                        Constraint::Fill(4),   // volume_area
-                        Constraint::Fill(1),   // _padding (stock, proportional)
-                        Constraint::Fill(4),   // meter_area
-                        Constraint::Fill(1),   // _padding (stock)
-                    ])
-                    .split(bar_area)
-            } else {
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints(meter_row_constraints(meter_layout))
-                    .split(bar_area)
-            };
-            let (volume_area, meter_area) = if unified_classic {
-                (layout[1], layout[3])
-            } else {
-                (layout[0], layout[2])
-            };
+            let (volume_area, meter_area) =
+                split_meter_row(bar_area, meter_layout);
 
             render_volume(
                 self.config,
@@ -998,43 +936,27 @@ impl StatefulWidget for VolumeWidget<'_> {
 
         let max_volume = self.config.max_volume_percent / 100.0;
 
-        // Unified view uses stock's own label width - `"{percent}%"`
-        // never needs more than 5, except when unified_imbalance =
-        // "cycle" is actually enabled, which needs one more column to
-        // fit the index digit ("0 100%") without truncating - *unless*
-        // Unified's own `MeterLayout` has been customized, in which case
-        // "reproduce stock exactly" was already given up, so the fold
-        // widens by the same 2 columns `NodeWidget::render`'s customized
-        // path folds into its own leading pad (see the `*_CUSTOM`
-        // constants' doc comments). Linked/Channels always use the
-        // wider, alignment-driven VOLUME_LABEL_WIDTH regardless, whether
-        // or not cycling applies to them (it never does - see
+        // Unified view uses its own label width - wider only when
+        // unified_imbalance = "cycle" is *configured*, never based on
+        // whether any particular row is actually imbalanced this frame.
+        // Every row in a Unified-view list must agree on this width
+        // regardless of its own balance state - varying it per row
+        // (tried and reverted) shifted cycling/imbalanced rows'
+        // bar-start column relative to balanced ones, which reads as a
+        // visual glitch scanning down the list rather than as "using
+        // the space efficiently". Linked/Channels always use the wider,
+        // alignment-driven VOLUME_LABEL_WIDTH regardless, whether or not
+        // cycling applies to them (it never does - see
         // `cycling_channel`) - see `VOLUME_LABEL_WIDTH`'s doc comment
         // for why.
         let view = self.channel_state.view();
         let cycling =
             self.channel_state.unified_imbalance == UnifiedImbalance::Cycle;
-        // `cycling` (above) says whether unified_imbalance = "cycle" is
-        // *configured*, not whether this particular render is actually
-        // showing an index prefix this frame - a balanced node still
-        // resolves `cycling_channel: None` even with cycling configured
-        // (see `cycling_channel`), so the widened label's extra column
-        // sits unused on every one of its renders. expand_unused_label_space
-        // reclaims that column into the bar on exactly those frames,
-        // trading Unified view's normal "every row's bar starts at the
-        // same column" consistency for a denser look on rows that
-        // aren't using the space anyway.
-        let cycling = cycling
-            && !(self.config.expand_unused_label_space
-                && self.cycling_channel.is_none());
         let label_width = if view == ChannelView::Unified {
-            let unified_classic =
-                self.config.meter_layout(view) == MeterLayout::default();
-            match (unified_classic, cycling) {
-                (true, true) => STOCK_VOLUME_LABEL_WIDTH_CYCLING,
-                (true, false) => STOCK_VOLUME_LABEL_WIDTH,
-                (false, true) => STOCK_VOLUME_LABEL_WIDTH_CYCLING_CUSTOM,
-                (false, false) => STOCK_VOLUME_LABEL_WIDTH_CUSTOM,
+            if cycling {
+                STOCK_VOLUME_LABEL_WIDTH_CYCLING
+            } else {
+                STOCK_VOLUME_LABEL_WIDTH
             }
         } else {
             VOLUME_LABEL_WIDTH
@@ -1055,20 +977,39 @@ impl StatefulWidget for VolumeWidget<'_> {
         if !volumes.is_empty() {
             // unified_imbalance = "cycle": show the currently-cycled
             // channel's own value (both label and bar) instead of the
-            // mean. The index and percentage are independently
+            // mean. The channel label and percentage are independently
             // right-aligned in their own sub-columns (same idea as
             // `ChannelRowWidget`'s label_col/percent_col) rather than
-            // rendered as one right-aligned string - otherwise the index
-            // digit's column shifts depending on the percentage's own
-            // digit count ("0 64%" vs "1 100%", index drifting left/right
-            // frame to frame instead of holding its column steady).
-            let (volume, index_label, percent_label) = if let Some(index) =
+            // rendered as one right-aligned string - otherwise the
+            // label's column shifts depending on the percentage's own
+            // digit count ("FL 64%" vs "FL 100%", the label drifting
+            // left/right frame to frame instead of holding its column
+            // steady).
+            let (volume, channel_label, percent_label) = if let Some(index) =
                 self.cycling_channel
             {
                 let raw = volumes.get(index).copied().unwrap_or(0.0);
                 let volume = raw.cbrt();
                 let percent = (volume * 100.0).round() as u32;
-                (volume, Some(index.to_string()), format!("{percent}%"))
+                // Same "simple stereo pair -> L/R, otherwise the
+                // channel's own real name, otherwise the raw index"
+                // fallback ChannelRowWidget's own per-channel label
+                // uses - a short, meaningful label reads better here
+                // than a bare index digit whenever one's available.
+                let label = match single_pair(self.node) {
+                    Some((left, _)) if index == left => "L".to_string(),
+                    Some(_) => "R".to_string(),
+                    None => self
+                        .node
+                        .positions
+                        .as_ref()
+                        .and_then(|positions| positions.get(index))
+                        .map(|&position| {
+                            channel_pairing::channel_name(position)
+                        })
+                        .unwrap_or_else(|| index.to_string()),
+                };
+                (volume, Some(label), format!("{percent}%"))
             } else {
                 let mean = volumes.iter().sum::<f32>() / volumes.len() as f32;
                 let volume = mean.cbrt();
@@ -1076,18 +1017,21 @@ impl StatefulWidget for VolumeWidget<'_> {
                 (volume, None, format!("{percent}%"))
             };
 
-            if let Some(index_label) = index_label {
+            if let Some(channel_label) = channel_label {
                 let label_split = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([
-                        Constraint::Length(1), // index_col
+                        Constraint::Length(CYCLING_CHANNEL_LABEL_WIDTH), // channel_col
                         Constraint::Length(4), // percent_col
                     ])
                     .spacing(1)
                     .split(volume_label);
-                Line::from(Span::styled(index_label, self.config.theme.volume))
-                    .alignment(Alignment::Right)
-                    .render(label_split[0], buf);
+                Line::from(Span::styled(
+                    channel_label,
+                    self.config.theme.volume,
+                ))
+                .alignment(Alignment::Right)
+                .render(label_split[0], buf);
                 Line::from(Span::styled(
                     percent_label,
                     self.config.theme.volume,
@@ -1421,17 +1365,10 @@ impl StatefulWidget for ChannelRowWidget<'_> {
         // channel has nothing to show a left/right split of).
         let meter_layout = self.config.meter_layout(self.view);
         let (row_area, meter_area) = if self.config.peaks == Peaks::Off {
-            let layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints(peaks_off_row_constraints(meter_layout))
-                .split(area);
-            (layout[0], None)
+            (peaks_off_volume_area(area, meter_layout), None)
         } else {
-            let layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints(meter_row_constraints(meter_layout))
-                .split(area);
-            (layout[0], Some(layout[2]))
+            let (volume_area, meter_area) = split_meter_row(area, meter_layout);
+            (volume_area, Some(meter_area))
         };
 
         let layout = Layout::default()
@@ -1600,42 +1537,28 @@ const RADIATING_LABEL_WIDTH: u16 =
 /// `STOCK_VOLUME_LABEL_WIDTH`/`STOCK_VOLUME_LABEL_WIDTH_CYCLING`.
 const VOLUME_LABEL_WIDTH: u16 = 12;
 
-/// `VolumeWidget`'s label width in true `Unified` view (channel_mode
-/// off, channel_display = "unified") - stock wiremix's own width,
-/// exactly reproduced: just `"{percent}%"`, nothing else, and nothing
-/// else in a stock-settings Unified-view list (no `Stacked`/
-/// `Radiating` row ever appears there under stock settings) needs to
-/// stay column-aligned with it the way `Linked`/`Channels` rows do.
-const STOCK_VOLUME_LABEL_WIDTH: u16 = 5;
+/// `VolumeWidget`'s label width in `Unified` view (channel_mode off,
+/// channel_display = "unified") when `unified_imbalance` isn't
+/// "cycle": just `"{percent}%"` (5 columns, matching real stock
+/// wiremix's own width), plus 2 folded-in blank columns - what used to
+/// be a separate leading `Constraint::Length(2)` in the outer bar/meter
+/// `Layout`, folded into this label instead for the same reason
+/// `VOLUME_LABEL_WIDTH` folds in its own padding (see its doc comment).
+const STOCK_VOLUME_LABEL_WIDTH: u16 = 7;
 
 /// Same as `STOCK_VOLUME_LABEL_WIDTH`, but for a Unified-view list
-/// where `unified_imbalance = "cycle"` is actually turned on - one
-/// column wider, to fit the extra index digit `"{index} {percent}%"`
-/// needs (`"0 100%"`) without truncating. This is the one place
-/// Unified view's layout is allowed to differ from true stock, and
-/// only when this fork-specific feature is deliberately opted into -
-/// see NOTES-multichannel.md.
-const STOCK_VOLUME_LABEL_WIDTH_CYCLING: u16 = 6;
+/// where `unified_imbalance = "cycle"` is turned on - wide enough for
+/// `channel_col`(`CYCLING_CHANNEL_LABEL_WIDTH`) + spacing(1) +
+/// `percent_col`(4), plus the same 2-column fold.
+const STOCK_VOLUME_LABEL_WIDTH_CYCLING: u16 =
+    CYCLING_CHANNEL_LABEL_WIDTH + 1 + 4 + 2;
 
-/// Same as `STOCK_VOLUME_LABEL_WIDTH`, but for a *customized* `Unified`
-/// view (any of its own `MeterLayout` fields set) - `NodeWidget::render`
-/// drops the separate leading `Constraint::Length(2)` stock's literal
-/// layout uses once any customization is in play (it only exists in the
-/// hardcoded, unconditional "reproduce stock exactly" path), folding the
-/// same 2 columns into this label instead - `5 + 2`. Byte-for-byte the
-/// same bar-start column either way; see `VOLUME_LABEL_WIDTH`'s doc
-/// comment for why folding a leading pad into a label rather than
-/// keeping it as a separate sibling constraint matters once the *outer*
-/// constraint list needs to match another widget's (it doesn't need to
-/// here - Unified never needs to match `Stacked`/`Radiating` rows - but
-/// keeping one folding convention throughout keeps the whole file's
-/// layout code consistent to reason about).
-const STOCK_VOLUME_LABEL_WIDTH_CUSTOM: u16 = 7;
-
-/// Same as `STOCK_VOLUME_LABEL_WIDTH_CUSTOM`, but for a customized
-/// `Unified` view where `unified_imbalance = "cycle"` is also on - `6 +
-/// 2`, same reasoning as `STOCK_VOLUME_LABEL_WIDTH_CYCLING`.
-const STOCK_VOLUME_LABEL_WIDTH_CYCLING_CUSTOM: u16 = 8;
+/// `VolumeWidget`'s cycling label column width in `Unified` view - fits
+/// a simple pair's `"L"`/`"R"`, most named positions (`"FL"`, `"RR"`,
+/// `"LFE"`), and numbered ones up to `"AUX9"` without truncating; wider
+/// numbered channels (`"AUX10"`+) truncate, an accepted edge case for a
+/// label that's meant to stay short.
+const CYCLING_CHANNEL_LABEL_WIDTH: u16 = 4;
 
 /// `StereoVolumeWidget`'s label_l width - same "closes the gap to a
 /// `Stacked` row's bar-start column" role `VOLUME_LABEL_WIDTH` plays,
@@ -1745,17 +1668,10 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         // only the left half, mirroring its volume bar.
         let meter_layout = self.config.meter_layout(self.view);
         let (row_area, meter_area) = if self.config.peaks == Peaks::Off {
-            let layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints(peaks_off_row_constraints(meter_layout))
-                .split(area);
-            (layout[0], None)
+            (peaks_off_volume_area(area, meter_layout), None)
         } else {
-            let layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints(meter_row_constraints(meter_layout))
-                .split(area);
-            (layout[0], Some(layout[2]))
+            let (volume_area, meter_area) = split_meter_row(area, meter_layout);
+            (volume_area, Some(meter_area))
         };
 
         if self.node.mute {
@@ -1839,20 +1755,28 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         let left_count = ((left_volume.clamp(0.0, max_volume) / max_volume)
             * bar_l.width as f32)
             .round() as usize;
-        Line::from(vec![
-            Span::styled(
-                self.config
-                    .char_set
-                    .volume_empty
-                    .repeat((bar_l.width as usize).saturating_sub(left_count)),
-                self.config.theme.volume_empty,
-            ),
-            Span::styled(
-                self.config.char_set.volume_filled.repeat(left_count),
-                self.config.theme.volume_filled,
-            ),
-        ])
-        .render(bar_l, buf);
+        let blank = self
+            .config
+            .char_set
+            .volume_empty
+            .repeat((bar_l.width as usize).saturating_sub(left_count));
+        let filled = self.config.char_set.volume_filled.repeat(left_count);
+        let spans = if self.right_index.is_none() {
+            // An unpaired channel always fills classic left-to-right,
+            // like every other non-radiating bar in the app - only a
+            // genuine radiating pair grows outward from a shared center
+            // marker (there's no pair here to radiate from).
+            vec![
+                Span::styled(filled, self.config.theme.volume_filled),
+                Span::styled(blank, self.config.theme.volume_empty),
+            ]
+        } else {
+            vec![
+                Span::styled(blank, self.config.theme.volume_empty),
+                Span::styled(filled, self.config.theme.volume_filled),
+            ]
+        };
+        Line::from(spans).render(bar_l, buf);
 
         mouse_areas.push((
             label_l,
@@ -1870,13 +1794,11 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         // every row in the block agrees on where the bar starts, but
         // there's no second channel here to show anything in them.
         let Some(right_index) = self.right_index else {
-            // Same "measured outward from the center-side edge" mapping
-            // bar_l's own click-to-set uses in the paired loop below
-            // (from_center = true) - the fill above grows the same way,
-            // so the two must agree or clicking a filled cell wouldn't
-            // reproduce the value it displays.
+            // Classic left-to-right mapping, matching the fill direction
+            // above - the two must agree or clicking a filled cell
+            // wouldn't reproduce the value it displays.
             for i in 0..=bar_l.width {
-                let x = bar_l.x.saturating_add(bar_l.width.saturating_sub(i));
+                let x = bar_l.x.saturating_add(i);
                 let volume_area = Rect::new(x, bar_l.y, 1, bar_l.height);
                 let volume_step = max_volume / bar_l.width as f32;
                 let volume = volume_step * i as f32;
@@ -2103,78 +2025,75 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     #[test]
-    fn meter_row_constraints_unset_reproduces_stock_ratio_exactly() {
-        let layout = MeterLayout::default();
-        assert_eq!(
-            meter_row_constraints(layout),
-            [
-                Constraint::Fill(4),
-                Constraint::Fill(1),
-                Constraint::Fill(4),
-                Constraint::Fill(1),
-            ],
-            "everything unset must reproduce stock's literal 4:1:4:1 \
-             Fill weights exactly"
-        );
-    }
-
-    #[test]
-    fn meter_row_constraints_custom_ratio_does_not_shrink_the_unset_gap() {
-        // Regression test for a real bug caught during design: naively
-        // reusing the configured ratio's own raw percent-scale weights
-        // (e.g. 80/20) alongside a hardcoded Fill(1) gap/margin would
-        // silently shrink the gap to a barely-visible ~1% of the row
-        // once the ratio departs from 50/50, since ratatui's Fill
-        // distributes proportionally across every Fill segment in the
-        // whole list, not scoped pairs. The gap/margin weight must be
-        // derived from the current volume+meter weight sum instead, so
-        // it always holds stock's own 1-in-8 proportion regardless of
-        // what ratio is configured.
-        let layout = MeterLayout {
-            meter_width_percent: Some(80.0),
-            gap: None,
-            right_margin: None,
-        };
-        let [volume, gap, meter, margin] = meter_row_constraints(layout);
-        assert_eq!(volume, Constraint::Fill(20));
-        assert_eq!(meter, Constraint::Fill(80));
-        // 1-in-8 of the combined 100 volume+meter weight, rounded up -
-        // nowhere near the hardcoded Fill(1) the naive version used.
-        assert_eq!(gap, Constraint::Fill(13));
-        assert_eq!(margin, Constraint::Fill(13));
-    }
-
-    #[test]
-    fn meter_row_constraints_set_gap_and_margin_become_fixed_length() {
+    fn split_meter_row_unset_ratio_splits_evenly() {
+        let area = Rect::new(0, 0, 100, 1);
         let layout = MeterLayout {
             meter_width_percent: None,
-            gap: Some(3),
-            right_margin: Some(7),
+            gap: 0,
+            right_margin: 0,
         };
-        let [volume, gap, meter, margin] = meter_row_constraints(layout);
-        assert_eq!(volume, Constraint::Fill(4));
-        assert_eq!(meter, Constraint::Fill(4));
-        assert_eq!(gap, Constraint::Length(3));
-        assert_eq!(margin, Constraint::Length(7));
+        let (volume_area, meter_area) = split_meter_row(area, layout);
+        assert_eq!(volume_area.width, 50);
+        assert_eq!(meter_area.width, 50);
+        assert_eq!(meter_area.x, 50);
     }
 
     #[test]
-    fn peaks_off_row_constraints_unset_reproduces_stock_ratio() {
-        let layout = MeterLayout::default();
+    fn split_meter_row_custom_ratio_never_shrinks_the_volume_side() {
+        // Regression guard: gap/right_margin must come out of the meter
+        // side alone - the volume side's own width must depend only on
+        // the ratio, never on how wide the gap/margin happen to be.
+        let area = Rect::new(0, 0, 100, 1);
+        let narrow_gap = MeterLayout {
+            meter_width_percent: Some(20.0),
+            gap: 1,
+            right_margin: 1,
+        };
+        let wide_gap = MeterLayout {
+            meter_width_percent: Some(20.0),
+            gap: 20,
+            right_margin: 20,
+        };
         assert_eq!(
-            peaks_off_row_constraints(layout),
-            [Constraint::Fill(9), Constraint::Fill(1)]
+            split_meter_row(area, narrow_gap).0.width,
+            split_meter_row(area, wide_gap).0.width,
+            "volume_area's width must be identical regardless of gap/right_margin"
         );
+        assert_eq!(split_meter_row(area, narrow_gap).0.width, 80);
+    }
+
+    #[test]
+    fn split_meter_row_gap_and_margin_shrink_only_the_meter_area() {
+        let area = Rect::new(0, 0, 100, 1);
+        let layout = MeterLayout {
+            meter_width_percent: None,
+            gap: 3,
+            right_margin: 7,
+        };
+        let (volume_area, meter_area) = split_meter_row(area, layout);
+        assert_eq!(volume_area.width, 50);
+        // meter_side is 50 wide; gap(3) leads, right_margin(7) trails,
+        // leaving 50 - 3 - 7 = 40 for the meter itself.
+        assert_eq!(meter_area.width, 40);
+        assert_eq!(meter_area.x, 50 + 3);
+    }
+
+    #[test]
+    fn peaks_off_volume_area_reserves_only_right_margin() {
+        let area = Rect::new(0, 0, 100, 1);
+        let layout = MeterLayout {
+            meter_width_percent: None,
+            gap: 0,
+            right_margin: 0,
+        };
+        assert_eq!(peaks_off_volume_area(area, layout).width, 100);
 
         let layout = MeterLayout {
             meter_width_percent: None,
-            gap: None,
-            right_margin: Some(5),
+            gap: 0,
+            right_margin: 5,
         };
-        assert_eq!(
-            peaks_off_row_constraints(layout),
-            [Constraint::Fill(9), Constraint::Length(5)]
-        );
+        assert_eq!(peaks_off_volume_area(area, layout).width, 95);
     }
 
     fn test_node(positions: Option<Vec<u32>>, volumes: Vec<f32>) -> view::Node {
@@ -2308,7 +2227,8 @@ mod tests {
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
 
         let narrow_config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nmax_volume_percent = 100.0",
+            "channel_display = \"always\"\nmax_volume_percent = 100.0\n\
+             expand_unused_label_space = false",
         );
         let expanded_config = config::Config::from_toml_str(
             "channel_display = \"always\"\nmax_volume_percent = 100.0\n\
@@ -2442,37 +2362,12 @@ mod tests {
             .find(cycle_config.char_set.volume_filled.as_str())
             .expect("a filled bar somewhere");
         assert_eq!(
-            cycle_bar_start, 9,
-            "unified_imbalance = \"cycle\" should widen the label by \
-             exactly the one column it needs, not more"
-        );
-    }
-
-    #[test]
-    fn expand_unused_label_space_reclaims_the_unused_cycle_column() {
-        // Same mono node/cycle config as
-        // unified_view_volume_label_widens_only_for_cycle - a mono node
-        // can never be imbalanced (nothing to differ from), so
-        // cycling_channel is None here even with unified_imbalance =
-        // "cycle" configured (see cycling_channel_none_when_balanced).
-        // expand_unused_label_space should notice the reserved index
-        // column is going unused on this render and reclaim it, landing
-        // back on the same column the non-cycling case uses.
-        let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
-        let node = test_node(Some(vec![mono]), vec![1.0]);
-
-        let config = config::Config::from_toml_str(
-            "unified_imbalance = \"cycle\"\nexpand_unused_label_space = true",
-        );
-        let rendered = render_to_string(&config, &node);
-        let bar_start = rendered
-            .find(config.char_set.volume_filled.as_str())
-            .expect("a filled bar somewhere");
-        assert_eq!(
-            bar_start, 8,
-            "a non-imbalanced (here, mono) node's unused cycling column \
-             should be reclaimed, landing on the same column the \
-             non-cycling case uses"
+            cycle_bar_start, 12,
+            "unified_imbalance = \"cycle\" should widen the label to fit \
+             a channel label plus percentage (11) + 1 spacing - the \
+             same width for every row regardless of whether this \
+             particular one is ever actually imbalanced (see \
+             CYCLING_CHANNEL_LABEL_WIDTH)"
         );
     }
 
@@ -2534,13 +2429,15 @@ mod tests {
         let rendered = render_to_string(&config, &node);
 
         // Channel 0's own 100% (not the 79% mean the same node showed in
-        // the unified_imbalance = "none" test above).
-        assert!(rendered.contains("0 100%"));
+        // the unified_imbalance = "none" test above) - labeled "L" since
+        // this node is a simple FL/FR pair (see single_pair), not the
+        // raw index.
+        assert!(rendered.contains("L 100%"));
         assert!(!rendered.contains("79%"));
     }
 
     #[test]
-    fn unified_imbalance_cycle_index_column_holds_position_regardless_of_percent_width(
+    fn unified_imbalance_cycle_channel_label_holds_position_regardless_of_percent_width(
     ) {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
@@ -2550,17 +2447,23 @@ mod tests {
 
         // Channel 0's own value at differing percent widths - 64% (two
         // digits) vs 100% (three) - previously shifted the index digit's
-        // column, since "{index} {percent}%" was right-aligned as one
-        // string ("0 64%" vs "1 100%" reads as the index drifting
-        // between frames instead of holding its column steady).
+        // column when it was rendered as one right-aligned string
+        // together with the percentage; label_col/percent_col are
+        // independently right-aligned specifically so this can't happen.
         let two_digit = test_node(Some(vec![fl, fr]), vec![0.262144, 0.0]);
         let three_digit = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
 
         let two_digit_rendered = render_to_string(&config, &two_digit);
         let three_digit_rendered = render_to_string(&config, &three_digit);
 
-        assert!(two_digit_rendered.starts_with("0  64%"));
-        assert!(three_digit_rendered.starts_with("0 100%"));
+        // Channel 0 of a simple FL/FR pair labels as "L" (see
+        // single_pair) - its column must hold steady regardless of the
+        // percentage's own digit count.
+        let label_col = |s: &str| s.find('L').expect("channel label present");
+        assert_eq!(
+            label_col(&two_digit_rendered),
+            label_col(&three_digit_rendered),
+        );
     }
 
     #[test]
@@ -3191,16 +3094,22 @@ mod tests {
     fn radiating_pair_and_unpaired_rows_start_their_bars_at_the_same_column() {
         // The whole point of sharing one column grid: an unpaired
         // channel's bar must start at exactly the same x position a
-        // paired row's left bar would, not just the same length. Both
-        // channels are maxed so the bar's first character is guaranteed
-        // filled (no empty prefix to obscure exactly where it starts).
+        // paired row's left bar would, not just the same length.
+        // max_volume_percent = 100 so FL's bar is fully (not just
+        // partially) filled - otherwise its "grow from center" partial
+        // fill would leave a genuine empty prefix before the fill
+        // starts, and "first filled character" would land inside bar_l
+        // rather than at its true left edge (FC's bar, filling classic
+        // left-to-right since it's unpaired, has no such prefix, so the
+        // two would silently disagree on what "bar start" means
+        // without this).
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
         let node = test_node(Some(vec![fl, fr, fc]), vec![1.0, 0.0, 1.0]);
         let config = config::Config::from_toml_str(
             "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
-             peaks = \"off\"",
+             peaks = \"off\"\nmax_volume_percent = 100.0",
         );
 
         let lines = render_node_lines(&config, &node, false, false, None);
@@ -3438,9 +3347,14 @@ mod tests {
         // adjacent to center" bars only 2/3 full, leaving a genuine empty
         // prefix before the fill - "first filled character" wouldn't
         // reliably locate the bar's true start column in that case).
+        // expand_unused_label_space explicitly off - this test verifies
+        // the baseline cross-widget alignment invariant, which the
+        // setting deliberately trades away when on (see its own doc
+        // comment).
         let config = config::Config::from_toml_str(
             "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
-             peaks = \"off\"\nmax_volume_percent = 100.0",
+             peaks = \"off\"\nmax_volume_percent = 100.0\n\
+             expand_unused_label_space = false",
         );
         let filled = config.char_set.volume_filled.as_str();
         let bar_start = |lines: &[String]| -> usize {
@@ -3557,11 +3471,8 @@ mod tests {
         // An explicit right_margin = 0 override lets content reach
         // further right than a larger explicit right_margin does -
         // checked via the last non-space column used by a fully-filled
-        // classic bar+meter row. right_margin only applies outside
-        // Unified view (Unified reproduces stock's own proportional
-        // layout unconditionally when left at its own defaults - see
-        // STOCK_VOLUME_LABEL_WIDTH's doc comment), so this needs a
-        // Linked-view node to actually exercise it.
+        // classic bar+meter row. Uses a Linked-view node, but every view
+        // (Unified included) shares the same generic mechanism now.
         let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
         let node = test_node(Some(vec![mono]), vec![1.0]);
 
