@@ -393,6 +393,19 @@ impl<'a> NodeWidget<'a> {
         let visible_groups =
             area.height.saturating_sub(1).min(groups.len() as u16) as usize;
 
+        // Only ask ratatui for as many rows as can actually fit. Every row
+        // here (header or channel) is always exactly 1 line tall, so
+        // clamping the constraint count to `area.height` guarantees
+        // `Layout::split` has exactly enough space for each constraint it's
+        // given. Handing it more `Length(1)` constraints than fit lets its
+        // solver spread the shortfall across *all* of them instead of just
+        // the trailing ones - e.g. a 6-channel block squeezed into 2 rows
+        // short would drop channels 1 and 5, not 5 and 6, leaving a
+        // channel row rendered with no header above it and gaps in the
+        // middle of the block instead of a clean cut at the bottom.
+        let visible_groups =
+            area.height.saturating_sub(1).min(groups.len() as u16) as usize;
+
         let mut constraints = vec![Constraint::Length(1)]; // header_row
         constraints.extend(
             std::iter::repeat(Constraint::Length(1)).take(visible_groups),
@@ -2439,7 +2452,8 @@ mod tests {
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
         };
-        let height = NodeWidget::node_height(channel_state, node);
+        let height =
+            NodeWidget::node_height(channel_state, node, config.compact_layout);
         render_node_lines_with_height(
             config,
             node,
