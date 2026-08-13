@@ -642,7 +642,8 @@ impl StatefulWidget for NodeWidget<'_> {
                 buf,
                 mouse_areas,
             );
-            MeterWidget::new(self.config, self.node).render(meter_area, buf);
+            MeterWidget::new(self.config, self.node, view)
+                .render(meter_area, buf);
         }
     }
 }
@@ -1506,7 +1507,7 @@ impl StatefulWidget for ChannelRowWidget<'_> {
                 .as_deref()
                 .and_then(|peaks| peaks.get(channel_index))
                 .map(|peak| peak.load());
-            meter::render_channel_mono(meter_area, buf, peak, self.config);
+            meter::render_mono(meter_area, buf, peak, self.config, self.view);
             self.node.peaks_dirty.store(false, Ordering::Relaxed);
         }
     }
@@ -1951,18 +1952,20 @@ impl RadiatingRowWidget<'_> {
                         (Some(peak), None) | (None, Some(peak)) => Some(peak),
                         (None, None) => None,
                     };
-                    meter::render_channel_mono(
+                    meter::render_mono(
                         meter_area,
                         buf,
                         mono,
                         self.config,
+                        self.view,
                     );
                 } else {
-                    meter::render_channel_stereo(
+                    meter::render_stereo(
                         meter_area,
                         buf,
                         left.zip(right),
                         self.config,
+                        self.view,
                     );
                 }
             }
@@ -1974,7 +1977,7 @@ impl RadiatingRowWidget<'_> {
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Fill(1), Constraint::Fill(1)])
                     .split(meter_area);
-                meter::render_channel_mono(half[0], buf, left, self.config);
+                meter::render_mono(half[0], buf, left, self.config, self.view);
             }
         }
 
@@ -1985,11 +1988,16 @@ impl RadiatingRowWidget<'_> {
 struct MeterWidget<'a> {
     config: &'a Config,
     node: &'a view::Node,
+    view: ChannelView,
 }
 
 impl<'a> MeterWidget<'a> {
-    fn new(config: &'a Config, node: &'a view::Node) -> Self {
-        Self { config, node }
+    fn new(
+        config: &'a Config,
+        node: &'a view::Node,
+        view: ChannelView,
+    ) -> Self {
+        Self { config, node, view }
     }
 }
 
@@ -2002,6 +2010,7 @@ impl Widget for MeterWidget<'_> {
                     buf,
                     Some((left.load(), right.load())),
                     self.config,
+                    self.view,
                 )
             }
             Some(peaks @ [..]) => {
@@ -2009,7 +2018,7 @@ impl Widget for MeterWidget<'_> {
                     peaks.iter().map(|peak| peak.load()).sum::<f32>()
                         / peaks.len() as f32,
                 );
-                meter::render_mono(area, buf, peaks, self.config)
+                meter::render_mono(area, buf, peaks, self.config, self.view)
             }
             _ => match self
                 .node
@@ -2018,9 +2027,17 @@ impl Widget for MeterWidget<'_> {
                 .map(|positions| positions.len())
             {
                 Some(2) if self.config.peaks != Peaks::Mono => {
-                    meter::render_stereo(area, buf, None, self.config)
+                    meter::render_stereo(
+                        area,
+                        buf,
+                        None,
+                        self.config,
+                        self.view,
+                    )
                 }
-                _ => meter::render_mono(area, buf, None, self.config),
+                _ => {
+                    meter::render_mono(area, buf, None, self.config, self.view)
+                }
             },
         }
 
@@ -3388,12 +3405,15 @@ mod tests {
     }
 
     #[test]
-    fn paired_row_meter_uses_the_same_stock_glyphs_as_a_whole_node_meter() {
-        // Per-row monitors reuse the project's existing stock meter
-        // glyphs (meter_left/right/center_*) verbatim - no distinct
-        // "channel" glyph. A pair row's gauge is a real stereo split
-        // (render_stereo, same as MeterWidget's own whole-node stereo
-        // meter); an unpaired row's is a mono gauge (render_mono).
+    fn paired_row_meter_uses_the_shared_meter_split_glyph_by_default() {
+        // Per-row monitors in a Stacked block (view != Unified) share
+        // one glyph selection, driven by the active view rather than
+        // which widget struct happens to be drawing: a pair row's gauge
+        // is a real stereo split (render_stereo), an unpaired row's is
+        // a mono gauge (render_mono), but both consult the same
+        // meter_split_left/right_active field, which now ships a real
+        // default (distinct from the stock meter_left_active glyph)
+        // instead of falling back to it.
         use crate::atomic_f32::AtomicF32;
         use std::sync::Arc;
 
@@ -3414,27 +3434,35 @@ mod tests {
         let lines = render_node_lines(&config, &node, false, false, None);
         assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
 
-        let meter_active = config.char_set.meter_left_active.as_str();
-        assert!(
-            lines[1].contains(meter_active),
-            "a pair row's monitor gauge should use the stock \
-             meter_left/right glyph"
+        let split_active =
+            config.char_set.meter_split_left_active.as_deref().unwrap();
+        let stock_active = config.char_set.meter_left_active.as_str();
+        assert_ne!(
+            split_active, stock_active,
+            "the default meter_split_* glyph should be genuinely \
+             distinct from the stock one"
         );
         assert!(
-            lines[2].contains(meter_active),
-            "an unpaired row's monitor gauge should use the same stock \
-             glyph too"
+            lines[1].contains(split_active),
+            "a pair row's monitor gauge should use the default \
+             meter_split_left/right glyph"
+        );
+        assert!(
+            lines[2].contains(split_active),
+            "an unpaired row's monitor gauge should use the same \
+             default split glyph too"
         );
     }
 
     #[test]
-    fn meter_channel_overrides_apply_to_split_rows_but_not_the_classic_meter() {
-        // A theme that *does* configure meter_channel_* should see it
-        // only on per-row split monitors (ChannelRowWidget/
-        // RadiatingRowWidget) - the classic single-row `MeterWidget`
-        // (used here by the plain stereo node) must keep using the
-        // stock meter_left/right/center glyphs regardless, since it
-        // never consults meter_channel_* at all.
+    fn meter_split_overrides_apply_wherever_view_is_not_unified() {
+        // A theme that configures meter_split_* should see it on every
+        // meter whose active view isn't Unified - not just per-row
+        // split monitors (ChannelRowWidget/RadiatingRowWidget) inside a
+        // Stacked block, but also the classic single-row `MeterWidget`
+        // when it's rendering a lone stereo pair in Linked/Channels
+        // view. The trigger is the view, not which widget struct is
+        // doing the drawing.
         use crate::atomic_f32::AtomicF32;
         use std::sync::Arc;
 
@@ -3447,18 +3475,20 @@ mod tests {
              char_set = \"test\"\n\
              [char_sets.test]\n\
              inherit = \"default\"\n\
-             meter_channel_left_active = \"\u{2759}\"\n\
-             meter_channel_right_active = \"\u{2759}\"",
+             meter_split_left_active = \"\u{2759}\"\n\
+             meter_split_right_active = \"\u{2759}\"",
         );
-        let channel_glyph = "\u{2759}";
+        let split_glyph = "\u{2759}";
         let stock_glyph = config.char_set.meter_left_active.as_str();
         assert_ne!(
-            channel_glyph, stock_glyph,
-            "the test needs a channel glyph genuinely distinct from stock"
+            split_glyph, stock_glyph,
+            "the test needs a split glyph genuinely distinct from stock"
         );
 
-        // Classic single-row node (plain FL/FR pair, no third channel) -
-        // MeterWidget, never split, must render with the stock glyph.
+        // Lone stereo pair (plain FL/FR, no third channel) - this is
+        // MeterWidget's own whole-node meter, but channel_display =
+        // "always" puts it in Linked view, so it must pick up the
+        // meter_split_* override too.
         let mut classic_node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
         classic_node.peaks =
             Some(Arc::from([AtomicF32::new(1.0), AtomicF32::new(1.0)]));
@@ -3466,12 +3496,12 @@ mod tests {
             render_node_lines(&config, &classic_node, false, false, None);
         // [header, blank spacer, bar+meter] - the classic path leaves a
         // blank spacer line between its header and bar rows.
-        assert!(classic_lines[2].contains(stock_glyph));
-        assert!(!classic_lines[2].contains(channel_glyph));
+        assert!(classic_lines[2].contains(split_glyph));
+        assert!(!classic_lines[2].contains(stock_glyph));
 
         // Split node (FL/FR/FC forces a Stacked/Radiating block) - both
         // the pair row and the unpaired row must use the configured
-        // channel glyph instead.
+        // split glyph too.
         let mut split_node =
             test_node(Some(vec![fl, fr, fc]), vec![1.0, 1.0, 1.0]);
         split_node.peaks = Some(Arc::from([
@@ -3482,8 +3512,40 @@ mod tests {
         let split_lines =
             render_node_lines(&config, &split_node, false, false, None);
         assert_eq!(split_lines.len(), 3); // header + pair row + single row
-        assert!(split_lines[1].contains(channel_glyph));
-        assert!(split_lines[2].contains(channel_glyph));
+        assert!(split_lines[1].contains(split_glyph));
+        assert!(split_lines[2].contains(split_glyph));
+    }
+
+    #[test]
+    fn meter_split_overrides_do_not_apply_in_unified_view() {
+        // The same lone-pair node and meter_split_* override as above,
+        // but without channel_display = "always" - default
+        // channel_display is "unified", so the node's meter stays in
+        // Unified view and must keep rendering with the stock glyph,
+        // regardless of what meter_split_* is configured to.
+        use crate::atomic_f32::AtomicF32;
+        use std::sync::Arc;
+
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let config = config::Config::from_toml_str(
+            "peaks = \"auto\"\n\
+             char_set = \"test\"\n\
+             [char_sets.test]\n\
+             inherit = \"default\"\n\
+             meter_split_left_active = \"\u{2759}\"\n\
+             meter_split_right_active = \"\u{2759}\"",
+        );
+        let split_glyph = "\u{2759}";
+        let stock_glyph = config.char_set.meter_left_active.as_str();
+
+        let mut node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
+        node.peaks =
+            Some(Arc::from([AtomicF32::new(1.0), AtomicF32::new(1.0)]));
+        let lines = render_node_lines(&config, &node, false, false, None);
+
+        assert!(lines[2].contains(stock_glyph));
+        assert!(!lines[2].contains(split_glyph));
     }
 
     #[test]
@@ -3573,7 +3635,14 @@ mod tests {
              char_set = \"compat\"\n\
              [linked_meter_layout]\nmeter_width_percent = 25.0",
         );
-        let meter_glyph = default_config.char_set.meter_left_active.as_str();
+        // channel_display = "always" puts every node in Linked view, so
+        // both the classic mono node and the Stacked block's row render
+        // with the meter_split_* glyph, not the stock one.
+        let meter_glyph = default_config
+            .char_set
+            .meter_split_right_active
+            .as_deref()
+            .unwrap_or(&default_config.char_set.meter_right_active);
         let meter_start = |lines: &[String]| -> usize {
             lines
                 .iter()

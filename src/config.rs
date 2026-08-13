@@ -425,25 +425,22 @@ pub struct CharSet {
     pub meter_center_left_active: String,
     pub meter_center_right_inactive: String,
     pub meter_center_right_active: String,
-    /// Per-channel-row monitor overrides (`split_style = "stacked"`'s
-    /// `ChannelRowWidget` rows and `split_style = "radiating"`'s
-    /// `RadiatingRowWidget` rows) - `None` means "not configured", which
-    /// falls back to the corresponding `meter_left`/`meter_right`/
-    /// `meter_center_*` field above, so a row's monitor gauge looks
-    /// identical to a whole node's until a theme opts in to something
-    /// distinct for split rows specifically. The classic single-row
-    /// `MeterWidget` never consults these - only per-row split monitors
-    /// do.
-    pub meter_channel_left_inactive: Option<String>,
-    pub meter_channel_left_active: Option<String>,
-    pub meter_channel_left_overload: Option<String>,
-    pub meter_channel_right_inactive: Option<String>,
-    pub meter_channel_right_active: Option<String>,
-    pub meter_channel_right_overload: Option<String>,
-    pub meter_channel_center_left_inactive: Option<String>,
-    pub meter_channel_center_left_active: Option<String>,
-    pub meter_channel_center_right_inactive: Option<String>,
-    pub meter_channel_center_right_active: Option<String>,
+    /// Monitor glyphs used whenever the active view (`ChannelView`) is
+    /// `Linked` or `Channels` rather than `Unified` - `None` means "not
+    /// configured", which falls back to the corresponding `meter_left`/
+    /// `meter_right`/`meter_center_*` field above, so a split-view
+    /// monitor gauge looks identical to `Unified`'s until a theme opts
+    /// in to something distinct. `Unified` view never consults these.
+    pub meter_split_left_inactive: Option<String>,
+    pub meter_split_left_active: Option<String>,
+    pub meter_split_left_overload: Option<String>,
+    pub meter_split_right_inactive: Option<String>,
+    pub meter_split_right_active: Option<String>,
+    pub meter_split_right_overload: Option<String>,
+    pub meter_split_center_left_inactive: Option<String>,
+    pub meter_split_center_left_active: Option<String>,
+    pub meter_split_center_right_inactive: Option<String>,
+    pub meter_split_center_right_active: Option<String>,
     pub dropdown_icon: String,
     pub dropdown_selector: String,
     pub dropdown_more: String,
@@ -472,20 +469,15 @@ pub struct Theme {
     pub meter_overload: Style,
     pub meter_center_inactive: Style,
     pub meter_center_active: Style,
-    /// Per-channel-row monitor color overrides, same "unset falls back to
-    /// the stock meter_* field above" idea as `CharSet`'s
-    /// `meter_channel_*` glyph overrides - a thin/light-weight glyph
-    /// (from a font family the terminal renders differently than the
-    /// stock box-drawing glyphs) can read visibly brighter than the
-    /// stock inactive color even under the identical `Style`, so a theme
-    /// may want to compensate with a genuinely different (usually
-    /// darker) color for split rows specifically, without touching the
-    /// classic whole-node meter's own colors.
-    pub meter_channel_inactive: Option<Style>,
-    pub meter_channel_active: Option<Style>,
-    pub meter_channel_overload: Option<Style>,
-    pub meter_channel_center_inactive: Option<Style>,
-    pub meter_channel_center_active: Option<Style>,
+    /// Monitor colors used whenever the active view (`ChannelView`) is
+    /// `Linked` or `Channels` rather than `Unified`, same "unset falls
+    /// back to the stock meter_* field above" idea as `CharSet`'s
+    /// `meter_split_*` glyph overrides.
+    pub meter_split_inactive: Option<Style>,
+    pub meter_split_active: Option<Style>,
+    pub meter_split_overload: Option<Style>,
+    pub meter_split_center_inactive: Option<Style>,
+    pub meter_split_center_active: Option<Style>,
     pub config_device: Style,
     pub config_profile: Style,
     pub dropdown_icon: Style,

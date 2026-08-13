@@ -498,6 +498,16 @@ meter_overload = { fg = "Red" }
 # The "live" indicator in the center of the meter
 meter_center_inactive = { fg = "DarkGray" }
 meter_center_active = { fg = "LightGreen" }
+# Peak meter colors used instead of the meter_*/meter_center_* colors above
+# whenever the active view is "linked" or "channels" rather than "unified"
+# (see view_cycle). Unset (the default) falls back to the meter_*/
+# meter_center_* color above, so a theme that hasn't opted in to a distinct
+# look for linked/channels view renders identically to "unified".
+# meter_split_inactive = { fg = "DarkGray" }
+# meter_split_active = { fg = "LightGreen" }
+# meter_split_overload = { fg = "Red" }
+# meter_split_center_inactive = { fg = "DarkGray" }
+# meter_split_center_active = { fg = "LightGreen" }
 # The name of a device in the Configuration tab
 config_device = { }
 # The name of the selected profile in the Configuration tab
@@ -562,6 +572,13 @@ list_more = "•••"
 # Volume bar
 volume_empty = "╌"
 volume_filled = "━"
+# volume_filled/volume_empty can be set to any two characters you like. For
+# example, pulsemixer draws its volume bars with filled/empty rectangles and
+# no explicit spacing character between repeated ones - the glyphs' own
+# built-in inset already reads as a gap on all 4 sides in most monospace
+# fonts:
+# volume_filled = "▮"
+# volume_empty  = "▯"
 # Peak meter. Inactive = unlit, active = lit, overload = greater than 0.0 dB
 # Mono meters use only the right side characters
 meter_left_inactive = "▮"
@@ -576,6 +593,23 @@ meter_center_left_inactive = "▮"
 meter_center_left_active = "▮"
 meter_center_right_inactive = "▮"
 meter_center_right_active = "▮"
+# Peak meter glyphs used instead of the meter_*/meter_center_* glyphs above
+# whenever the active view is "linked" or "channels" rather than "unified"
+# (see view_cycle) - lets a split/per-channel meter look visually distinct
+# from a whole node's own "unified" meter. Unset falls back to the
+# meter_*/meter_center_* glyph above, so a char_set that hasn't opted in to
+# a distinct look for linked/channels view renders identically to
+# "unified". Mono meters use only the right/center_right side.
+meter_split_left_inactive = "❘"
+meter_split_left_active = "❘"
+meter_split_left_overload = "❘"
+meter_split_right_inactive = "❘"
+meter_split_right_active = "❘"
+meter_split_right_overload = "❘"
+meter_split_center_left_inactive = "▇"
+meter_split_center_left_active = "▇"
+meter_split_center_right_inactive = "▇"
+meter_split_center_right_active = "▇"
 # Dropdown marker next to the profiles in the Configuration tab
 dropdown_icon = "▼"
 # Indicates the selected item in a dropdown
@@ -616,6 +650,11 @@ meter_active = { add_modifier = "BOLD" }
 meter_overload = { add_modifier = "BOLD" }
 meter_center_inactive = { add_modifier = "DIM" }
 meter_center_active = { add_modifier = "BOLD" }
+# meter_split_inactive = { add_modifier = "DIM" }
+# meter_split_active = { add_modifier = "BOLD" }
+# meter_split_overload = { add_modifier = "BOLD" }
+# meter_split_center_inactive = { add_modifier = "DIM" }
+# meter_split_center_active = { add_modifier = "BOLD" }
 config_device = { }
 config_profile = { }
 dropdown_icon = { }
@@ -645,6 +684,11 @@ meter_active = { }
 meter_overload = { }
 meter_center_inactive = { }
 meter_center_active = { }
+# meter_split_inactive = { }
+# meter_split_active = { }
+# meter_split_overload = { }
+# meter_split_center_inactive = { }
+# meter_split_center_active = { }
 config_device = { }
 config_profile = { }
 dropdown_icon = { }
@@ -677,6 +721,16 @@ meter_center_left_inactive = "█"
 meter_center_left_active = "█"
 meter_center_right_inactive = "█"
 meter_center_right_active = "█"
+meter_split_left_inactive = "❘"
+meter_split_left_active = "❘"
+meter_split_left_overload = "❘"
+meter_split_right_inactive = "❘"
+meter_split_right_active = "❘"
+meter_split_right_overload = "❘"
+meter_split_center_left_inactive = "▇"
+meter_split_center_left_active = "▇"
+meter_split_center_right_inactive = "▇"
+meter_split_center_right_active = "▇"
 dropdown_icon = "▼"
 dropdown_selector = ">"
 dropdown_more = "•••"
@@ -685,6 +739,11 @@ help_more = "•••"
 help_border = "Plain"
 
 [char_sets.extracompat]
+# Explicit inherit (unlike default/compat above) so the commented-out
+# meter_split_* lines below correctly reflect this char_set's own None
+# default, rather than falling back to [char_sets.default]'s Some("❘")/
+# Some("▇").
+inherit = "extracompat"
 default_device = "*"
 default_stream = "*"
 selector_top = "-"
@@ -705,6 +764,19 @@ meter_center_left_inactive = "["
 meter_center_left_active = "["
 meter_center_right_inactive = "]"
 meter_center_right_active = "]"
+# extracompat stays unset (ASCII-only, works-everywhere) here, unlike
+# default/compat above - it keeps falling back to the classic meter_*/
+# meter_center_* glyphs above in every view.
+# meter_split_left_inactive = "="
+# meter_split_left_active = "#"
+# meter_split_left_overload = "!"
+# meter_split_right_inactive = "="
+# meter_split_right_active = "#"
+# meter_split_right_overload = "!"
+# meter_split_center_left_inactive = "["
+# meter_split_center_left_active = "["
+# meter_split_center_right_inactive = "]"
+# meter_split_center_right_active = "]"
 dropdown_icon = "\\"
 dropdown_selector = ">"
 dropdown_more = "~~~"
