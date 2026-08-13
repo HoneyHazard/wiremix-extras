@@ -28,6 +28,25 @@ fn is_default(node: &view::Node, device_kind: Option<DeviceKind>) -> bool {
     }
 }
 
+/// Patches `row_unselected` on top of `style` whenever `selected` is
+/// false. Unlike `row_selected` (a whole-row background fill applied
+/// unconditionally by the row's own top-level widget), this only ever
+/// touches text spans, so it's applied per-span rather than as a single
+/// area fill. Shared by every per-row widget that renders text spans
+/// (`HeaderWidget`, `VolumeWidget`, `device_widget::DeviceWidget`)
+/// instead of each carrying its own copy of the same two-line branch.
+pub(crate) fn row_text_style(
+    selected: bool,
+    style: Style,
+    config: &Config,
+) -> Style {
+    if selected {
+        style
+    } else {
+        style.patch(config.theme.row_unselected)
+    }
+}
+
 pub struct NodeWidget<'a> {
     config: &'a Config,
     device_kind: Option<DeviceKind>,
@@ -273,17 +292,9 @@ impl<'a> HeaderWidget<'a> {
         }
     }
 
-    /// Patches `row_unselected` on top of `style` when this row isn't the
-    /// selected one. Unlike `row_selected` (a whole-row background fill
-    /// applied unconditionally in `NodeWidget::render`), this only ever
-    /// touches text spans, so it's applied per-span rather than as a
-    /// single area fill.
+    /// See `row_text_style`.
     fn text_style(&self, style: Style) -> Style {
-        if self.selected {
-            style
-        } else {
-            style.patch(self.config.theme.row_unselected)
-        }
+        row_text_style(self.selected, style, self.config)
     }
 
     fn target_line(&self) -> Line<'_> {
@@ -408,13 +419,9 @@ impl<'a> VolumeWidget<'a> {
         }
     }
 
-    /// See `HeaderWidget::text_style`.
+    /// See `row_text_style`.
     fn text_style(&self, style: Style) -> Style {
-        if self.selected {
-            style
-        } else {
-            style.patch(self.config.theme.row_unselected)
-        }
+        row_text_style(self.selected, style, self.config)
     }
 }
 

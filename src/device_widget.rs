@@ -13,6 +13,7 @@ use smallvec::smallvec;
 
 use crate::app::{Action, MouseArea};
 use crate::config::Config;
+use crate::node_widget::row_text_style;
 use crate::object_list::ObjectList;
 use crate::view;
 
@@ -72,13 +73,9 @@ impl<'a> DeviceWidget<'a> {
         Rect::new(x, y, width, height)
     }
 
-    /// See `node_widget::HeaderWidget::text_style`.
+    /// See `node_widget::row_text_style`.
     fn text_style(&self, style: Style) -> Style {
-        if self.selected {
-            style
-        } else {
-            style.patch(self.config.theme.row_unselected)
-        }
+        row_text_style(self.selected, style, self.config)
     }
 }
 
