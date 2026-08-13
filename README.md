@@ -74,10 +74,10 @@ in the same order.
 10. [theme-row-selected-text](https://github.com/tsowell/wiremix/pull/63)
 11. dark-theme (a maintained branch in `HoneyHazard/wiremix`; no upstream
     PR — it's a personal theme, not a proposed default)
-12. [multichannel-pairing](https://github.com/HoneyHazard/wiremix/tree/multichannel-pairing)
+12. [multichannel-pairing](https://github.com/tsowell/wiremix/pull/76)
     — merged last, as it's both the largest change and the one most likely
-    to keep evolving. A draft pull request against `tsowell/wiremix` is
-    planned; until then this links directly to the branch.
+    to keep evolving. Open as a draft pull request against
+    `tsowell/wiremix`.
 
 ---
 
