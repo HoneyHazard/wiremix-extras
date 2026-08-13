@@ -72,6 +72,7 @@ impl TryFrom<CharSetOverlay> for CharSet {
             Some("default") => CharSet::default(),
             Some("compat") => CharSet::compat(),
             Some("extracompat") => CharSet::extracompat(),
+            Some("redshift_compact") => CharSet::redshift_compact(),
             Some(inherit) => {
                 anyhow::bail!("'{}' is not a built-in character set", inherit)
             }
@@ -171,6 +172,10 @@ impl CharSet {
             (String::from("default"), CharSet::default()),
             (String::from("compat"), CharSet::compat()),
             (String::from("extracompat"), CharSet::extracompat()),
+            (
+                String::from("redshift_compact"),
+                CharSet::redshift_compact(),
+            ),
         ])
     }
 
@@ -236,6 +241,24 @@ impl CharSet {
         }
     }
 
+    /// A slightly denser companion to [`CharSet::compat`] for the
+    /// `redshift` theme: a solid-block selector column (unmistakable at
+    /// a glance) plus plain hairline borders and a shorter "more items"
+    /// ellipsis elsewhere, for a more compact overall look.
+    fn redshift_compact() -> CharSet {
+        Self {
+            selector_top: String::from("█"),
+            selector_middle: String::from("█"),
+            selector_bottom: String::from("█"),
+            dropdown_border: BorderType::Plain,
+            help_border: BorderType::Plain,
+            list_more: String::from("…"),
+            dropdown_more: String::from("…"),
+            help_more: String::from("…"),
+            ..CharSet::compat()
+        }
+    }
+
     /// Merge deserialized charsets with defaults
     pub fn merge<'de, D>(
         deserializer: D,
@@ -261,6 +284,12 @@ impl CharSet {
         }
         if !merged.contains_key("extracompat") {
             merged.insert(String::from("extracompat"), CharSet::extracompat());
+        }
+        if !merged.contains_key("redshift_compact") {
+            merged.insert(
+                String::from("redshift_compact"),
+                CharSet::redshift_compact(),
+            );
         }
         Ok(merged)
     }

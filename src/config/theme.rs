@@ -79,6 +79,7 @@ impl TryFrom<ThemeOverlay> for Theme {
             Some("default") => Theme::default(),
             Some("nocolor") => Theme::nocolor(),
             Some("plain") => Theme::plain(),
+            Some("redshift") => Theme::redshift(),
             Some(inherit) => {
                 anyhow::bail!("'{}' is not a built-in theme", inherit)
             }
@@ -171,6 +172,7 @@ impl Theme {
             (String::from("default"), Theme::default()),
             (String::from("nocolor"), Theme::nocolor()),
             (String::from("plain"), Theme::plain()),
+            (String::from("redshift"), Theme::redshift()),
         ])
     }
 
@@ -243,6 +245,60 @@ impl Theme {
         }
     }
 
+    /// A warm, low-blue dark theme - built for use under strong blue-light
+    /// filtering (redshift, gammastep, f.lux, night-light) at warm color
+    /// temperatures (~2700K-3400K), where the blue channel is cut by
+    /// roughly half and green is dimmed slightly while red is left
+    /// untouched or even boosted. Semantic meaning is remapped onto the
+    /// red -> orange -> amber -> yellow -> yellow-green ramp, which
+    /// keeps the most contrast headroom under that kind of filter.
+    /// Inherits from `default()` for anything not overridden below.
+    fn redshift() -> Self {
+        Self {
+            selector: Style::default()
+                .fg(Color::Rgb(0xFF, 0xD3, 0x4D))
+                .add_modifier(Modifier::BOLD),
+            tab_selected: Style::default()
+                .fg(Color::Rgb(0xFF, 0xD3, 0x4D))
+                .bg(Color::Rgb(0x3A, 0x2A, 0x00))
+                .add_modifier(Modifier::BOLD),
+            tab_marker: Style::default()
+                .fg(Color::Rgb(0xFF, 0xD3, 0x4D))
+                .bg(Color::Rgb(0x3A, 0x2A, 0x00)),
+            default_device: Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+            default_stream: Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+            volume_filled: Style::default().fg(Color::Rgb(0xFF, 0x96, 0x40)),
+            volume_empty: Style::default().fg(Color::DarkGray),
+            meter_active: Style::default().fg(Color::Rgb(0x9A, 0xCD, 0x32)),
+            meter_center_active: Style::default()
+                .fg(Color::Rgb(0x9A, 0xCD, 0x32))
+                .add_modifier(Modifier::BOLD),
+            meter_overload: Style::default()
+                .fg(Color::Rgb(0xFF, 0x3B, 0x30))
+                .add_modifier(Modifier::BOLD),
+            meter_inactive: Style::default().fg(Color::DarkGray),
+            meter_center_inactive: Style::default().fg(Color::DarkGray),
+            row_selected: Style::default()
+                .fg(Color::Rgb(0xFF, 0xD3, 0x4D))
+                .bg(Color::Rgb(0x3A, 0x14, 0x14))
+                .add_modifier(Modifier::BOLD),
+            row_unselected: Style::default().bg(Color::Rgb(0x1F, 0x0D, 0x0D)),
+            dropdown_selected: Style::default()
+                .fg(Color::Rgb(0xFF, 0xD3, 0x4D))
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+            dropdown_border: Style::default().fg(Color::DarkGray),
+            list_more: Style::default().fg(Color::DarkGray),
+            dropdown_more: Style::default().fg(Color::DarkGray),
+            help_border: Style::default().fg(Color::DarkGray),
+            help_more: Style::default().fg(Color::DarkGray),
+            ..Theme::default()
+        }
+    }
+
     /// Merge deserialized themes with defaults
     pub fn merge<'de, D>(
         deserializer: D,
@@ -268,6 +324,9 @@ impl Theme {
         }
         if !merged.contains_key("plain") {
             merged.insert(String::from("plain"), Theme::plain());
+        }
+        if !merged.contains_key("redshift") {
+            merged.insert(String::from("redshift"), Theme::redshift());
         }
         Ok(merged)
     }
