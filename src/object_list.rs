@@ -928,6 +928,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -957,6 +959,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -989,6 +993,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1073,8 +1079,6 @@ mod tests {
         assert_eq!(ids, expected);
     }
 
-    }
-
     #[test]
     fn visible_objects_changes_with_scroll() {
         let (state, wirehose) = init();
@@ -1128,6 +1132,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         // Exactly enough room for 3 items at the default (no-divider)
@@ -1157,6 +1163,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         // Exactly enough room for 4 items at compact_layout's shorter
