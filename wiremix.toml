@@ -687,3 +687,92 @@ dropdown_more = "~~~"
 dropdown_border = "Plain"
 help_more = "~~~"
 help_border = "Plain"
+
+
+# Appendix B: an example dark theme
+#
+# "redshift" + "redshift_compact" - a warm, low-blue dark theme paired
+# with a slightly denser character set. Try it with:
+#
+#   wiremix -t redshift -s redshift_compact
+#
+# Design rules for the theme:
+#  1. Nothing meaningful depends on blue or cyan hues - the stock theme's
+#     LightBlue/LightCyan accents wash out to dark, hard-to-read smudges
+#     under a strong blue-light filter (redshift, gammastep, f.lux,
+#     night-light) at warm color temperatures (~2700K-3400K), where the
+#     blue channel is cut by roughly half and green is dimmed slightly;
+#     red is left untouched or even boosted.
+#  2. Semantic meaning is remapped onto the red -> orange -> amber ->
+#     yellow -> yellow-green ramp, since a warm color-temperature filter
+#     leaves the most contrast headroom in that range.
+#  3. Where two elements could plausibly be confused once hue
+#     discrimination degrades, a modifier (BOLD/REVERSED) backs up the
+#     color so meaning still comes through.
+#  4. Everything not listed below is left unstyled and simply inherits
+#     from the "default" theme (see `inherit` below).
+[themes.redshift]
+inherit = "default"
+
+# Selection cursor + active tab: brightest "look here" color in the
+# palette, kept off both the volume-bar and meter colors below so focus
+# is never ambiguous with level/status.
+selector     = { fg = "#FFD34D", add_modifier = "BOLD" }
+tab_selected = { fg = "#FFD34D", bg = "#3A2A00", add_modifier = "BOLD" }
+tab_marker   = { fg = "#FFD34D", bg = "#3A2A00" }
+
+# Default device/stream marker: pulled off the color ramp entirely and
+# just bolded white, so "this is the default" reads as a distinct kind
+# of signal, not another color to compare.
+default_device = { fg = "White", add_modifier = "BOLD" }
+default_stream = { fg = "White", add_modifier = "BOLD" }
+
+# Volume bar: warm amber/orange, one rung below selection yellow.
+volume_filled = { fg = "#FF9640" }
+volume_empty  = { fg = "DarkGray" }
+
+# Peak meters: yellow-green survives redshift well (only its already-low
+# blue channel gets cut further); overload red is untouched by design
+# and gets bolded for extra emphasis since it's the one thing you want
+# to notice immediately even out of the corner of your eye.
+meter_active           = { fg = "#9ACD32" }
+meter_center_active    = { fg = "#9ACD32", add_modifier = "BOLD" }
+meter_overload         = { fg = "#FF3B30", add_modifier = "BOLD" }
+meter_inactive         = { fg = "DarkGray" }
+meter_center_inactive  = { fg = "DarkGray" }
+
+# Selected row: whole row (not just the gutter marker) gets a subtle
+# dark-red tint behind the same accent yellow + BOLD used for
+# selector/tab_selected above, same "pill" pattern (dark bg + bright
+# fg), just red-toned instead of brown.
+row_selected = { fg = "#FFD34D", bg = "#3A1414", add_modifier = "BOLD" }
+
+# Faint background tint on every unselected row's text only, much
+# darker/less saturated than row_selected's bg so it never competes
+# with the selection highlight - distinguishes item rows from the
+# blank gaps between them at a glance.
+row_unselected = { bg = "#1F0D0D" }
+
+# Dropdowns: reuse the selection yellow; REVERSED carries the contrast
+# via fg/bg swap rather than hue, so it stays legible even if warm hues
+# start blurring together.
+dropdown_selected = { fg = "#FFD34D", add_modifier = "BOLD | REVERSED" }
+dropdown_border   = { fg = "DarkGray" }
+list_more         = { fg = "DarkGray" }
+dropdown_more     = { fg = "DarkGray" }
+help_border       = { fg = "DarkGray" }
+help_more         = { fg = "DarkGray" }
+
+# A slightly denser companion char_set: solid-block selector column
+# (unmistakable at a glance) plus plain hairline borders and a shorter
+# "more items" ellipsis elsewhere, for a more compact overall look.
+[char_sets.redshift_compact]
+inherit = "compat"
+selector_top    = "█"
+selector_middle = "█"
+selector_bottom = "█"
+dropdown_border = "Plain"
+help_border     = "Plain"
+list_more       = "…"
+dropdown_more   = "…"
+help_more       = "…"

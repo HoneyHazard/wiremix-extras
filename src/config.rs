@@ -799,8 +799,22 @@ mod tests {
         let toml_str = include_str!("../wiremix.toml");
         let example: strict::ConfigFile = toml::from_str(toml_str).unwrap();
         let default: ConfigFile = toml::from_str("").unwrap();
+        let mut example: ConfigFile = example.into();
 
-        assert_eq!(default, example.into());
+        // wiremix.toml also documents an example "redshift"/
+        // "redshift_compact" theme/char_set beyond the built-in ones -
+        // strip those extra entries before comparing, so this test still
+        // verifies the *built-in* documented defaults match the
+        // compiled-in Rust defaults without requiring every example
+        // theme to be a no-op.
+        example
+            .themes
+            .retain(|name, _| default.themes.contains_key(name));
+        example
+            .char_sets
+            .retain(|name, _| default.char_sets.contains_key(name));
+
+        assert_eq!(default, example);
     }
 
     #[test]
