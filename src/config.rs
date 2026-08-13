@@ -36,6 +36,7 @@ pub struct Config {
     pub peaks: Peaks,
     pub char_set: CharSet,
     pub theme: Theme,
+    pub show_dividers: bool,
     pub max_volume_percent: f32,
     pub enforce_max_volume: bool,
     pub keybindings: HashMap<KeyEvent, Action>,
@@ -64,6 +65,8 @@ struct ConfigFile {
     char_set: String,
     #[serde(default = "default_theme_name")]
     theme: String,
+    #[serde(default = "default_show_dividers")]
+    show_dividers: bool,
     #[serde(default = "default_max_volume_percent")]
     max_volume_percent: Option<f32>,
     #[serde(default = "default_enforce_max_volume")]
@@ -151,6 +154,7 @@ pub struct CharSet {
     pub tab_marker_left: String,
     pub tab_marker_right: String,
     pub list_more: String,
+    pub divider: String,
     pub volume_empty: String,
     pub volume_filled: String,
     pub meter_left_inactive: String,
@@ -181,6 +185,7 @@ pub struct Theme {
     pub tab_selected: Style,
     pub tab_marker: Style,
     pub list_more: Style,
+    pub divider: Style,
     pub node_title: Style,
     pub node_target: Style,
     pub volume: Style,
@@ -270,6 +275,10 @@ fn default_lazy_capture() -> bool {
     false
 }
 
+fn default_show_dividers() -> bool {
+    false
+}
+
 impl ConfigFile {
     /// Override configuration with command-line arguments.
     pub fn apply_opt(&mut self, opt: &Opt) {
@@ -327,6 +336,14 @@ impl ConfigFile {
 
         if opt.lazy_capture {
             self.lazy_capture = true;
+        }
+
+        if opt.no_show_dividers {
+            self.show_dividers = false;
+        }
+
+        if opt.show_dividers {
+            self.show_dividers = true;
         }
     }
 }
@@ -390,6 +407,7 @@ impl TryFrom<ConfigFile> for Config {
             enforce_max_volume: config_file.enforce_max_volume,
             char_set,
             theme,
+            show_dividers: config_file.show_dividers,
             keybindings: config_file.keybindings,
             help,
             names: config_file.names,
@@ -469,6 +487,7 @@ pub mod strict {
         peaks: Option<Peaks>,
         char_set: String,
         theme: String,
+        show_dividers: bool,
         max_volume_percent: Option<f32>,
         enforce_max_volume: bool,
         #[serde(deserialize_with = "keybindings")]
@@ -493,6 +512,7 @@ pub mod strict {
                 peaks: strict.peaks,
                 char_set: strict.char_set,
                 theme: strict.theme,
+                show_dividers: strict.show_dividers,
                 max_volume_percent: strict.max_volume_percent,
                 enforce_max_volume: strict.enforce_max_volume,
                 keybindings: strict.keybindings,
