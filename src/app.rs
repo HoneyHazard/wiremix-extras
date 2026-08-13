@@ -231,6 +231,14 @@ pub struct App<'a> {
     capturable_objects: HashSet<ObjectId>,
     /// Objects currently being captured.
     capturing_objects: HashSet<ObjectId>,
+    /// Index into the sorted eligible-objects list where the next capture
+    /// rotation window should start. Only meaningful when
+    /// config.max_concurrent_captures is set.
+    capture_rotation_start: usize,
+    /// Rendered frames elapsed since the capture rotation window last
+    /// advanced. See ROTATION_FRAME_INTERVAL - deliberately a frame count,
+    /// not a wall-clock duration.
+    frames_since_rotation: u32,
 }
 
 macro_rules! current_list {
@@ -278,6 +286,8 @@ impl<'a> App<'a> {
             peak_processor: Arc::new(peak_processor),
             capturable_objects: HashSet::new(),
             capturing_objects: HashSet::new(),
+            capture_rotation_start: 0,
+            frames_since_rotation: 0,
         }
     }
 
@@ -330,6 +340,13 @@ impl<'a> App<'a> {
             if needs_render && pacer.is_time_to_render() {
                 needs_render = false;
 
+                // Tied to the render cadence itself (see
+                // ROTATION_FRAME_INTERVAL) rather than a wall-clock timer of
+                // its own: rotate_capturing() is only ever called here, in
+                // step with an actually-rendered frame, so counting frames
+                // there is exact rather than an approximation of one.
+                self.rotate_capturing();
+
                 self.mouse_areas.clear();
 
                 terminal.draw(|frame| {
@@ -372,11 +389,97 @@ impl<'a> App<'a> {
         self.wirehose.node_capture_stop(object_id);
     }
 
+    /// Node name wiremix (fork or upstream) gives its own peak-monitoring
+    /// capture streams - see wirehose::stream::capture_node. Counting nodes
+    /// with this name in the shared PipeWire graph state is what makes
+    /// max_concurrent_captures_global possible without any custom IPC: the
+    /// graph itself is already the shared, live state every instance reads.
+    const CAPTURE_NODE_NAME: &'static str = "wiremix-capture";
+
+    /// Total number of "wiremix-capture" nodes currently visible in the
+    /// PipeWire graph, from any client - not just this instance's own
+    /// capturing_objects. See the comment at its call site in
+    /// start_capture() for the consistency caveats this implies.
+    fn global_capture_count(&self) -> usize {
+        self.state
+            .nodes
+            .values()
+            .filter(|node| {
+                node.props.node_name().map(String::as_str)
+                    == Some(Self::CAPTURE_NODE_NAME)
+            })
+            .count()
+    }
+
     fn start_capture(&mut self, object_id: ObjectId) {
         if self.config.lazy_capture
             && !self.visible_objects.contains(&object_id)
         {
             return;
+        }
+
+        // Hard cap on concurrent captures, enforced here (not just in the
+        // rotation logic) so it can never be transiently exceeded - e.g. by
+        // several nodes becoming capture-eligible at once before the next
+        // rotation tick has a chance to run.
+        if let Some(max) = self.config.max_concurrent_captures {
+            if self.capturing_objects.len() >= max
+                && !self.capturing_objects.contains(&object_id)
+            {
+                return;
+            }
+        }
+
+        // Same idea, but counting *every* "wiremix-capture" node currently
+        // visible in the PipeWire graph - including ones opened by other
+        // wiremix instances - rather than just this instance's own
+        // capturing_objects. This is necessarily best-effort: there's no
+        // cross-process locking, so two instances racing to start a new
+        // capture at the same moment can both observe room under the cap
+        // and both proceed, transiently exceeding it until the graph state
+        // settles. It also can't make non-cooperating processes (upstream
+        // wiremix without this option, or any other client also named
+        // "wiremix-capture") back off - it only makes instances that opt
+        // into this setting considerate of each other and of themselves.
+        //
+        // global_capture_count() alone is not enough: it only reflects
+        // captures that have round-tripped through the PipeWire server and
+        // come back as a state update over wirehose's event channel, but
+        // node_capture_start() (called at the bottom of this function) is
+        // fire-and-forget - it queues a command for a separate PipeWire
+        // thread and returns immediately, with no synchronous confirmation.
+        // handle_events() drains and processes every currently-queued event
+        // in one synchronous burst (see its `while let Ok(event) =
+        // self.rx.try_recv()` loop), which is exactly when a flood of
+        // CaptureEligibility::Eligible events (e.g. on startup, or when
+        // lazy_capture reveals many nodes at once) calls start_capture()
+        // for many objects back to back. None of those calls' own
+        // node_capture_start() commands can possibly have round-tripped
+        // back into self.state.nodes by the time the next call in the same
+        // burst runs this check - so global_capture_count() reports the
+        // same stale pre-burst number for the whole burst, and every call
+        // sees "room under the cap" even after dozens of this instance's
+        // own captures have already been started. Confirmed live: a single
+        // instance with max_concurrent_captures_global = 20 and no other
+        // instances contending ended up with 28 of its own active
+        // captures, purely from this self-lag - not from any cross-instance
+        // race, and not from CaptureEligibility::NeedsRestart (ruled out
+        // separately: capture streams are properly disconnected on renewal
+        // now that StreamRegistry::add_stream() calls disconnect() on the
+        // stream it evicts, matching what StreamRegistry::remove() already
+        // did - see that fix's own commit). self.capturing_objects.len()
+        // has no such lag - it's updated synchronously the instant this
+        // instance decides to capture something, before any round trip -
+        // so folding it in as a floor closes the self-lag gap without
+        // changing the inherent, already-documented cross-instance
+        // best-effort behavior above.
+        if let Some(max) = self.config.max_concurrent_captures_global {
+            let estimate = self
+                .global_capture_count()
+                .max(self.capturing_objects.len());
+            if estimate >= max && !self.capturing_objects.contains(&object_id) {
+                return;
+            }
         }
 
         let Some(node) = self.state.nodes.get(&object_id) else {
@@ -440,6 +543,101 @@ impl<'a> App<'a> {
             .collect();
         for object_id in need_to_stop {
             self.stop_capture(object_id);
+        }
+    }
+
+    /// How many rendered frames pass between capture rotation slides, when
+    /// max_concurrent_captures limits capture to fewer than are eligible.
+    /// Deliberately a multiple of the render cadence itself (see
+    /// RenderPacer and rotate_capturing()'s call site) rather than an
+    /// independent wall-clock timer of its own: rotation speed - and the
+    /// PipeWire stream churn it costs - then scales automatically with
+    /// whatever fps a user has configured, with no second unrelated timer
+    /// to reason about. Every frame would create more stream churn than not
+    /// rotating at all (see rotate_capturing()'s doc comment); every 3rd
+    /// frame keeps swap rates to a handful per second even at high fps,
+    /// while still giving near-real-time coverage at typical settings -
+    /// e.g. at 10-20fps, sweeping through ~10 eligible objects at
+    /// max_concurrent_captures=2 takes well under 3 seconds.
+    const ROTATION_FRAME_INTERVAL: u32 = 3;
+
+    /// If max_concurrent_captures is set and more objects are eligible for
+    /// capture than that, periodically swap which subset is actually being
+    /// captured so every eligible object eventually gets sampled instead of
+    /// whichever ones happened to become eligible first (and then stay
+    /// captured forever, starving everything else).
+    ///
+    /// Slides the window by exactly one object per tick, rather than
+    /// jumping it forward by the full window size - so at most one capture
+    /// starts and one stops per tick, and everything else already in the
+    /// window is left alone. A full-window jump every tick would mean every
+    /// currently-captured object goes stale for the whole interval and then
+    /// *all* of them change at once; a one-at-a-time slide instead gives a
+    /// continuous, staggered trickle where something is always freshly
+    /// updated.
+    ///
+    /// Only ever called once per actually-rendered frame (see its call site
+    /// in run()), so counting frames via frames_since_rotation is exact.
+    fn rotate_capturing(&mut self) {
+        let Some(max) = self.config.max_concurrent_captures else {
+            return;
+        };
+
+        self.frames_since_rotation =
+            self.frames_since_rotation.saturating_add(1);
+        if self.frames_since_rotation < Self::ROTATION_FRAME_INTERVAL {
+            return;
+        }
+
+        // Same eligibility rule start_capture()/update_capturing() already
+        // use: scoped to on-screen objects under lazy_capture, otherwise
+        // every capturable object regardless of visibility.
+        let mut eligible: Vec<ObjectId> = if self.config.lazy_capture {
+            self.visible_objects
+                .intersection(&self.capturable_objects)
+                .copied()
+                .collect()
+        } else {
+            self.capturable_objects.iter().copied().collect()
+        };
+
+        if eligible.len() <= max {
+            // Everything eligible already fits under the cap - nothing to
+            // rotate. Leave frames_since_rotation alone (already at or past
+            // the threshold) so a rotation isn't "owed" extra delay the
+            // moment the eligible set grows past max again.
+            return;
+        }
+
+        self.frames_since_rotation = 0;
+
+        // Sorting gives a stable, deterministic rotation order across ticks
+        // (HashSet iteration order isn't stable) so each tick advances
+        // through the *same* sequence rather than picking an arbitrary new
+        // subset every time.
+        eligible.sort_unstable();
+
+        let n = eligible.len();
+        let start = self.capture_rotation_start % n;
+        let window: HashSet<ObjectId> =
+            (0..max.min(n)).map(|i| eligible[(start + i) % n]).collect();
+        self.capture_rotation_start = (start + 1) % n;
+
+        let need_to_stop: Vec<_> = self
+            .capturing_objects
+            .difference(&window)
+            .copied()
+            .collect();
+        for object_id in need_to_stop {
+            self.stop_capture(object_id);
+        }
+
+        let need_to_start: Vec<_> = window
+            .difference(&self.capturing_objects)
+            .copied()
+            .collect();
+        for object_id in need_to_start {
+            self.start_capture(object_id);
         }
     }
 
@@ -946,6 +1144,8 @@ mod tests {
             filters: Default::default(),
             show_dividers: Default::default(),
             compact_layout: Default::default(),
+            max_concurrent_captures: Default::default(),
+            max_concurrent_captures_global: Default::default(),
         };
 
         let mut app = App::new(wirehose, event_rx, config);
@@ -1049,6 +1249,8 @@ mod tests {
             filters: Default::default(),
             show_dividers: Default::default(),
             compact_layout: Default::default(),
+            max_concurrent_captures: Default::default(),
+            max_concurrent_captures_global: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);
 
@@ -1391,5 +1593,185 @@ mod tests {
 
         Action::ToggleCompactLayout.handle(&mut app).unwrap();
         assert!(!app.config.compact_layout);
+    }
+
+    /// Sets frames_since_rotation so the next rotate_capturing() call
+    /// doesn't have to wait out the real frame-count interval.
+    fn force_rotation_due(app: &mut App<'_>) {
+        app.frames_since_rotation = App::ROTATION_FRAME_INTERVAL;
+    }
+
+    #[test]
+    fn start_capture_enforces_max_concurrent() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str(
+            "lazy_capture = false\nmax_concurrent_captures = 2",
+        );
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        for i in 1..=3 {
+            let id = ObjectId::from_raw_id(i);
+            add_capturable_node(&mut app, id);
+            app.set_capture_eligibility(CaptureEligibility::Eligible(id));
+        }
+
+        // Only 2 of the 3 eligible nodes should actually be capturing.
+        assert_eq!(app.capturing_objects.len(), 2);
+    }
+
+    /// Adds a node with node.name = "wiremix-capture" but never marks it
+    /// eligible - simulates another wiremix instance's own capture stream,
+    /// which is visible in the shared PipeWire graph state but is not
+    /// something *this* instance would ever try to manage itself (the
+    /// default node.name = "wiremix-capture" filter in
+    /// config::filter::Filter::defaults() already keeps it out of
+    /// capturable_objects).
+    fn add_foreign_capture_node(app: &mut App<'_>, object_id: ObjectId) {
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("wiremix-capture"));
+        props.set_media_class(String::from("Stream/Input/Audio"));
+        props.set_node_name(String::from("wiremix-capture"));
+        props.set_object_serial(u32::from(object_id) as u64);
+
+        StateEvent::NodeProperties { object_id, props }
+            .handle(app)
+            .unwrap();
+    }
+
+    #[test]
+    fn start_capture_enforces_global_max() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str(
+            "lazy_capture = false\nmax_concurrent_captures_global = 2",
+        );
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        // Two capture streams already open elsewhere (not ours) - the
+        // global budget is already fully spent. In the real running
+        // system, this instance's own started captures would also show up
+        // here (PipeWire reflects every client's streams to every
+        // listener, which is exactly why Filter::defaults() has to
+        // explicitly exclude "wiremix-capture" from capturable_objects -
+        // self-observation is real), self-consistently shrinking its own
+        // remaining budget as it captures more. The mock wirehose doesn't
+        // simulate that round trip, so this test instead fixes the global
+        // count at the cap via foreign nodes and checks the decline path.
+        add_foreign_capture_node(&mut app, ObjectId::from_raw_id(100));
+        add_foreign_capture_node(&mut app, ObjectId::from_raw_id(101));
+
+        for i in 1..=3 {
+            let id = ObjectId::from_raw_id(i);
+            add_capturable_node(&mut app, id);
+            app.set_capture_eligibility(CaptureEligibility::Eligible(id));
+        }
+
+        // Global budget is already fully spent by the two foreign nodes,
+        // so none of the 3 locally-eligible nodes should start capturing -
+        // despite there being no local max_concurrent_captures at all.
+        assert_eq!(app.capturing_objects.len(), 0);
+    }
+
+    #[test]
+    fn global_capture_count_counts_foreign_nodes_only_by_name() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str("");
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        assert_eq!(app.global_capture_count(), 0);
+
+        add_foreign_capture_node(&mut app, ObjectId::from_raw_id(100));
+        assert_eq!(app.global_capture_count(), 1);
+
+        // A regular, differently-named node shouldn't be counted.
+        add_capturable_node(&mut app, ObjectId::from_raw_id(101));
+        assert_eq!(app.global_capture_count(), 1);
+
+        add_foreign_capture_node(&mut app, ObjectId::from_raw_id(102));
+        assert_eq!(app.global_capture_count(), 2);
+    }
+
+    #[test]
+    fn rotate_capturing_respects_max() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str(
+            "lazy_capture = true\nmax_concurrent_captures = 2",
+        );
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        for i in 1..=5 {
+            let id = ObjectId::from_raw_id(i);
+            add_capturable_node(&mut app, id);
+            app.capturable_objects.insert(id);
+            app.visible_objects.insert(id);
+        }
+
+        force_rotation_due(&mut app);
+        app.rotate_capturing();
+
+        assert_eq!(app.capturing_objects.len(), 2);
+    }
+
+    #[test]
+    fn rotate_capturing_advances_window() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str(
+            "lazy_capture = true\nmax_concurrent_captures = 2",
+        );
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        for i in 1..=5 {
+            let id = ObjectId::from_raw_id(i);
+            add_capturable_node(&mut app, id);
+            app.capturable_objects.insert(id);
+            app.visible_objects.insert(id);
+        }
+
+        force_rotation_due(&mut app);
+        app.rotate_capturing();
+        let first_window = app.capturing_objects.clone();
+
+        force_rotation_due(&mut app);
+        app.rotate_capturing();
+        let second_window = app.capturing_objects.clone();
+
+        assert_eq!(first_window.len(), 2);
+        assert_eq!(second_window.len(), 2);
+        assert_ne!(first_window, second_window);
+    }
+
+    #[test]
+    fn rotate_capturing_noop_under_cap() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str(
+            "lazy_capture = true\nmax_concurrent_captures = 10",
+        );
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        for i in 1..=3 {
+            let id = ObjectId::from_raw_id(i);
+            add_capturable_node(&mut app, id);
+            app.capturable_objects.insert(id);
+            app.visible_objects.insert(id);
+            app.set_capture_eligibility(CaptureEligibility::Eligible(id));
+        }
+
+        force_rotation_due(&mut app);
+        app.rotate_capturing();
+
+        // Fewer eligible nodes than the cap - everything stays captured,
+        // nothing gets rotated out.
+        assert_eq!(app.capturing_objects.len(), 3);
     }
 }

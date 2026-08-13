@@ -105,6 +105,21 @@ pub struct Opt {
     #[clap(long, conflicts_with = "no_lenient_config")]
     pub lenient_config: bool,
 
+    /// Cap how many nodes have their peak levels actively monitored at once,
+    /// rotating which ones are captured every few seconds if more than this
+    /// many are eligible (further reduces CPU usage on systems with many
+    /// concurrent streams/devices, at the cost of meters updating less often
+    /// per node)
+    #[clap(long, value_name = "COUNT")]
+    pub max_concurrent_captures: Option<usize>,
+
+    /// Cap how many peak-monitoring streams may exist system-wide across
+    /// all running wiremix instances at once (best-effort - see README for
+    /// caveats). Composes with --max-concurrent-captures, which caps this
+    /// instance alone
+    #[clap(long, value_name = "COUNT")]
+    pub max_concurrent_captures_global: Option<usize>,
+
     #[cfg(debug_assertions)]
     #[clap(short, long)]
     pub dump_events: bool,
