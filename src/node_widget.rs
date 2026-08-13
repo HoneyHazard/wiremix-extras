@@ -949,14 +949,14 @@ impl StatefulWidget for VolumeWidget<'_> {
 
         // Unified view's label width never changes, cycling or not -
         // every row's bar starts at the same column regardless of
-        // balance state. A cycling row's channel label (below) squeezes
-        // into whatever space is left before the percent text instead
-        // of getting its own reserved width, rather than widening the
-        // row to fit it. Linked/Channels always use the wider,
-        // alignment-driven VOLUME_LABEL_WIDTH regardless, whether or
-        // not cycling applies to them (it never does - see
-        // `cycling_channel`) - see `VOLUME_LABEL_WIDTH`'s doc comment
-        // for why.
+        // balance state. A cycling row's channel label (below) gets its
+        // own fixed sub-area at volume_label's own left edge, sized so
+        // it can never collide with the percent's own worst-case width
+        // - see STOCK_VOLUME_LABEL_WIDTH's doc comment. Linked/Channels
+        // always use the wider, alignment-driven VOLUME_LABEL_WIDTH
+        // regardless, whether or not cycling applies to them (it never
+        // does - see `cycling_channel`) - see `VOLUME_LABEL_WIDTH`'s
+        // doc comment for why.
         let view = self.channel_state.view();
         let label_width = if view == ChannelView::Unified {
             STOCK_VOLUME_LABEL_WIDTH
@@ -1024,26 +1024,32 @@ impl StatefulWidget for VolumeWidget<'_> {
                 percent_text
             };
 
-            // The channel label (if cycling) is drawn first, left-aligned,
-            // squeezed into whatever space volume_label happens to have
-            // free rather than getting its own reserved width - keeping
-            // volume_label's own total width (and so the bar's start
-            // column) identical to a balanced row's. The percent text
-            // then draws right-aligned on top, taking priority over
-            // whatever the label left behind: a short label ("L", "R",
-            // most named positions) leaves a natural gap before the
-            // percent; a long one (a numbered "AUX0"-style channel) may
-            // get its trailing character(s) overwritten if the percent
-            // reaches back far enough to need that space - an accepted
-            // trade-off for holding every row's bar to the same column
-            // regardless of balance state.
+            // The channel label (if cycling) gets its own fixed sub-area
+            // - UNIFIED_CHANNEL_LABEL_WIDTH columns, anchored to
+            // volume_label's own left edge (the same position it's
+            // always occupied, right after the selector) - right-aligned
+            // within it rather than left-aligned, so a short label ("L",
+            // "R") sits closer to the percent instead of hugging the far
+            // left. Since STOCK_VOLUME_LABEL_WIDTH reserves enough total
+            // width for the label sub-area *and* the percent's own worst
+            // case ("muted", 5 columns) side by side with no overlap
+            // (see its doc comment), the two never collide - a
+            // 4-character label and 5-character percent/mute meet
+            // exactly at the boundary with zero columns to spare in the
+            // worst case, but never overwrite each other's cells.
             if let Some(channel_label) = channel_label {
+                let label_area = Rect::new(
+                    volume_label.x,
+                    volume_label.y,
+                    UNIFIED_CHANNEL_LABEL_WIDTH,
+                    volume_label.height,
+                );
                 Line::from(Span::styled(
                     channel_label,
                     self.config.theme.volume,
                 ))
-                .alignment(Alignment::Left)
-                .render(volume_label, buf);
+                .alignment(Alignment::Right)
+                .render(label_area, buf);
             }
             Line::from(Span::styled(percent_text, self.config.theme.volume))
                 .alignment(Alignment::Right)
@@ -1547,16 +1553,29 @@ const RADIATING_PERCENT_WIDTH: u16 = 5;
 const VOLUME_LABEL_WIDTH: u16 = 13;
 
 /// `VolumeWidget`'s label width in `Unified` view (channel_mode off,
-/// channel_display = "unified") - just `"{percent}%"` (5 columns,
-/// matching real stock wiremix's own width), plus 2 folded-in blank
-/// columns - what used to be a separate leading `Constraint::Length(2)`
-/// in the outer bar/meter `Layout`, folded into this label instead for
-/// the same reason `VOLUME_LABEL_WIDTH` folds in its own padding (see
-/// its doc comment). This never widens for `unified_imbalance =
-/// "cycle"` - every Unified row's bar starts at the same column
-/// regardless of balance state; a cycling row's channel label squeezes
-/// into whatever space is left instead (see `VolumeWidget::render`).
-const STOCK_VOLUME_LABEL_WIDTH: u16 = 7;
+/// channel_display = "unified") - `UNIFIED_CHANNEL_LABEL_WIDTH` (4) for
+/// a cycling row's own channel label, plus the percent's own worst case
+/// ("muted", 5 columns), side by side with no overlap, `4 + 5 = 9`.
+/// This never changes for `unified_imbalance = "cycle"` - every Unified
+/// row's bar starts at the same column regardless of balance state; a
+/// cycling row's channel label gets its own fixed sub-area instead of
+/// widening the row (see `VolumeWidget::render`). Balanced rows (and
+/// `Linked`/`Channels`, which use `VOLUME_LABEL_WIDTH` instead) simply
+/// carry a bit more blank leading space than they strictly need - the
+/// trade-off for keeping every row's bar at a single, predictable
+/// column even though only some rows ever show a label.
+const STOCK_VOLUME_LABEL_WIDTH: u16 = 9;
+
+/// `VolumeWidget`'s channel-label sub-area width in `Unified` view -
+/// anchored to `volume_label`'s own left edge (right after the
+/// selector), independent of the percent text's own position. Right-
+/// aligned within it, so a short label ("L", "R") sits closer to the
+/// percent instead of hugging the far left. Fits a simple pair's
+/// `"L"`/`"R"`, most named positions (`"FL"`, `"RR"`, `"LFE"`), and
+/// numbered ones up to `"AUX9"` without truncating; wider numbered
+/// channels (`"AUX10"`+) truncate, an accepted edge case for a label
+/// that's meant to stay short.
+const UNIFIED_CHANNEL_LABEL_WIDTH: u16 = 4;
 
 /// `StereoVolumeWidget`'s label_l width - same "closes the gap to a
 /// `Stacked` row's bar-start column" role `VOLUME_LABEL_WIDTH` plays,
@@ -2371,8 +2390,8 @@ mod tests {
         // = "none") now carries small non-`None` gap/right_margin
         // defaults (see default_gap/default_right_margin in config.rs),
         // so it no longer takes the literal-stock fast path - the bar
-        // starts right after the customized label (7) + spacing(1) =
-        // column 8.
+        // starts right after the customized label (9) + spacing(1) =
+        // column 10.
         let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
         let balanced_node = test_node(Some(vec![mono]), vec![1.0]);
 
@@ -2383,9 +2402,9 @@ mod tests {
             .find(default_config.char_set.volume_filled.as_str())
             .expect("a filled bar somewhere");
         assert_eq!(
-            bar_start, 8,
-            "default Unified view's bar should start at column 8 \
-             (7-wide customized label + 1 spacing)"
+            bar_start, 10,
+            "default Unified view's bar should start at column 10 \
+             (9-wide customized label + 1 spacing)"
         );
 
         let cycle_config =
@@ -2398,12 +2417,12 @@ mod tests {
         let balanced_cycle_bar_start = balanced_cycle_rendered
             .find(cycle_config.char_set.volume_filled.as_str())
             .expect("a filled bar somewhere");
-        assert_eq!(balanced_cycle_bar_start, 8);
+        assert_eq!(balanced_cycle_bar_start, 10);
 
         // ...and a genuinely imbalanced FL/FR pair, showing a channel
-        // label alongside its own value, both land on column 8 - the
-        // label squeezes into whatever space is left before the
-        // percent instead of widening the row to fit it.
+        // label alongside its own value, both land on column 10 - the
+        // label has its own fixed sub-area within the row's total
+        // width instead of widening the row to fit it.
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let imbalanced_node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
@@ -2413,7 +2432,7 @@ mod tests {
             .find(cycle_config.char_set.volume_filled.as_str())
             .expect("a filled bar somewhere");
         assert_eq!(
-            imbalanced_bar_start, 8,
+            imbalanced_bar_start, 10,
             "a cycling row's bar must start at the same column a \
              balanced row's does, not a wider one"
         );
@@ -2479,11 +2498,11 @@ mod tests {
         // Channel 0's own 100% (not the 79% mean the same node showed in
         // the unified_imbalance = "none" test above) - labeled "L" since
         // this node is a simple FL/FR pair (see single_pair), not the
-        // raw index. Two spaces, not one: percent_col is 5 wide (to fit
-        // "muted" without truncating), and "100%" is only 4, leaving
-        // its own 1-column leading pad on top of the normal 1-column
-        // spacing before it.
-        assert!(rendered.contains("L  100%"));
+        // raw index. One space: "L" lands in the last column of its own
+        // 4-wide, right-aligned sub-area, immediately followed by the
+        // one blank column left over before "100%" (4 wide) fills the
+        // rest of the 9-wide volume_label.
+        assert!(rendered.contains("L 100%"));
         assert!(!rendered.contains("79%"));
     }
 
