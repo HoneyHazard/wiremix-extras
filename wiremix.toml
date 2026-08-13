@@ -267,14 +267,16 @@ keybindings = [
 #   be between 1 and 99 if set; to hide the meter entirely, use
 #   peaks = "off" instead. Applied before gap/right_margin, so widening
 #   either of those never costs the volume side any width.
-# gap - blank columns between the volume area and the meter area,
-#   carved out of the meter side alone. Small by default (2), universally
-#   across all three views - still fully overridable per view, including
-#   to 0.
+# gap - minimum blank columns between the volume area and the meter
+#   area, carved out of the meter side alone. Small by default (2,
+#   universally across all three views, still overridable per view) -
+#   this is a floor, not a fixed amount: the actual gap scales up above
+#   it as the meter side gets more available width, rather than staying
+#   visually cramped in a wide terminal.
 # right_margin - blank columns reserved at the row's right edge, also
-#   carved out of the meter side alone. Small by default (3), universally
-#   across all three views - still fully overridable per view, including
-#   to 0.
+#   carved out of the meter side alone. A fixed amount (unlike gap, this
+#   one doesn't scale) - small by default (3), universally across all
+#   three views - still fully overridable per view, including to 0.
 [unified_meter_layout]
 #meter_width_percent = 50.0
 gap = 2

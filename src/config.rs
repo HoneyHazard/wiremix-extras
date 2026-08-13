@@ -111,8 +111,11 @@ pub struct Config {
 /// with `peaks = "off"`, nothing to gap/split against). `meter_width_percent`
 /// left `None` (its default) reproduces stock wiremix's own proportional
 /// ratio; setting it opts that one field, for that one view, into a
-/// fixed-column override instead. `gap`/`right_margin` are always fixed
-/// column counts (never proportional) - both are carved out of the
+/// fixed-column override instead. `right_margin` is always a fixed
+/// column count; `gap` is a *floor* rather than a fixed override - the
+/// actual gap scales up above it with the meter side's own available
+/// width (see `effective_gap` in `node_widget.rs`), rather than staying
+/// visually cramped in a wide terminal. Both are carved out of the
 /// meter/monitor side's own share of the row, not the volume side's, so
 /// widening either never costs the volume area any width. The three
 /// fields and three views are all independent of each other. See

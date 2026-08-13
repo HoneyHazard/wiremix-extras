@@ -170,15 +170,26 @@ fn split_meter_row(area: Rect, layout: MeterLayout) -> (Rect, Rect) {
         ])
         .split(area);
     let volume_area = sides[0];
-    let meter_side = Layout::default()
+    let meter_side = sides[1];
+    let gap = effective_gap(layout.gap, meter_side.width);
+    let meter_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(layout.gap),
+            Constraint::Length(gap),
             Constraint::Min(0),
             Constraint::Length(layout.right_margin),
         ])
-        .split(sides[1]);
-    (volume_area, meter_side[1])
+        .split(meter_side);
+    (volume_area, meter_layout[1])
+}
+
+/// `layout.gap`'s configured value is a floor, not a fixed override -
+/// the actual gap scales up with the meter side's own available width
+/// (1-in-8, matching stock's own historical gap proportion) once
+/// there's enough room for that to exceed the floor, rather than
+/// staying visually cramped in a wide terminal.
+fn effective_gap(min_gap: u16, meter_side_width: u16) -> u16 {
+    min_gap.max(meter_side_width.div_ceil(8))
 }
 
 /// The `volume_area` for a bar-only row (`peaks = "off"`, nothing to gap
@@ -986,7 +997,7 @@ impl StatefulWidget for VolumeWidget<'_> {
             // digit count ("FL 64%" vs "FL 100%", the label drifting
             // left/right frame to frame instead of holding its column
             // steady).
-            let (volume, channel_label, percent_label) = if let Some(index) =
+            let (volume, channel_label, percent_text) = if let Some(index) =
                 self.cycling_channel
             {
                 let raw = volumes.get(index).copied().unwrap_or(0.0);
@@ -1018,30 +1029,61 @@ impl StatefulWidget for VolumeWidget<'_> {
                 (volume, None, format!("{percent}%"))
             };
 
+            // Mute is a single node-level property (SPA_PROP_mute), not
+            // per-channel, so it overrides the percent text alone - the
+            // channel label (if cycling) and the bar both keep
+            // rendering normally either way, matching the convention
+            // ChannelRowWidget's percent_col/StereoVolumeWidget's
+            // label_l/label_r use.
+            let percent_text = if self.node.mute {
+                "muted".to_string()
+            } else {
+                percent_text
+            };
+
             if let Some(channel_label) = channel_label {
-                let label_split = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([
-                        Constraint::Length(CYCLING_CHANNEL_LABEL_WIDTH), // channel_col
-                        Constraint::Length(4), // percent_col
-                    ])
-                    .spacing(1)
-                    .split(volume_label);
+                // Computed directly from volume_label's own right edge,
+                // not via a sub-`Layout::split` - ratatui's default flex
+                // packs `Length` constraints at the *start* of whatever
+                // area they're given and leaves any shortfall trailing
+                // at the end, which (since channel_col + spacing +
+                // percent_col adds up to less than volume_label's own
+                // width, the difference being the alignment fold) used
+                // to strand 2 blank columns between percent_col and the
+                // bar instead of before channel_col where they belong.
+                // 5, not 4 - fits "100%" or, once muted, "muted" (5
+                // characters) without truncating to "uted".
+                let percent_col_width = 5;
+                let percent_col = Rect::new(
+                    volume_label.x
+                        + volume_label.width.saturating_sub(percent_col_width),
+                    volume_label.y,
+                    percent_col_width,
+                    volume_label.height,
+                );
+                let channel_col = Rect::new(
+                    percent_col
+                        .x
+                        .saturating_sub(1 + CYCLING_CHANNEL_LABEL_WIDTH),
+                    volume_label.y,
+                    CYCLING_CHANNEL_LABEL_WIDTH,
+                    volume_label.height,
+                );
                 Line::from(Span::styled(
                     channel_label,
                     self.config.theme.volume,
                 ))
                 .alignment(Alignment::Right)
-                .render(label_split[0], buf);
+                .render(channel_col, buf);
                 Line::from(Span::styled(
-                    percent_label,
+                    percent_text,
                     self.config.theme.volume,
                 ))
                 .alignment(Alignment::Right)
-                .render(label_split[1], buf);
+                .render(percent_col, buf);
             } else {
                 Line::from(Span::styled(
-                    percent_label,
+                    percent_text,
                     self.config.theme.volume,
                 ))
                 .alignment(Alignment::Right)
@@ -1063,9 +1105,13 @@ impl StatefulWidget for VolumeWidget<'_> {
                 Span::styled(blank, self.config.theme.volume_empty),
             ])
             .render(volume_bar, buf);
-        }
-        if self.node.mute {
-            Line::from("muted").render(volume_label, buf);
+        } else if self.node.mute {
+            // No channels to show a percentage for at all (an unusual,
+            // likely-transient state) - still surface "muted" somewhere
+            // rather than showing nothing.
+            Line::from(Span::styled("muted", self.config.theme.volume))
+                .alignment(Alignment::Right)
+                .render(volume_label, buf);
         }
 
         mouse_areas.push((
@@ -1145,21 +1191,6 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let mouse_areas = state;
 
-        if self.node.mute {
-            Line::from("muted")
-                .alignment(Alignment::Center)
-                .render(area, buf);
-            mouse_areas.push((
-                area,
-                smallvec![MouseEventKind::Down(MouseButton::Left)],
-                smallvec![
-                    Action::SelectObject(self.node.object_id),
-                    Action::ToggleMute
-                ],
-            ));
-            return;
-        }
-
         let max_volume = self.config.max_volume_percent / 100.0;
 
         let (label_l_width, label_r_width) =
@@ -1205,18 +1236,28 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
         let right_volume =
             volumes.get(self.right_index).copied().unwrap_or(0.0).cbrt();
 
-        Line::from(Span::styled(
-            format!("{}%", (left_volume * 100.0).round() as u32),
-            self.config.theme.volume,
-        ))
-        .alignment(Alignment::Right)
-        .render(label_l, buf);
+        // Mute is a single node-level property (SPA_PROP_mute), not
+        // per-channel, so it replaces both channels' own percent text
+        // here rather than picking one - the bars/divider still render
+        // normally either way, only the percent text itself is
+        // overridden (same convention ChannelRowWidget's percent_col
+        // uses).
+        let left_percent = if self.node.mute {
+            "muted".to_string()
+        } else {
+            format!("{}%", (left_volume * 100.0).round() as u32)
+        };
+        Line::from(Span::styled(left_percent, self.config.theme.volume))
+            .alignment(Alignment::Right)
+            .render(label_l, buf);
 
-        Line::from(Span::styled(
-            format!("{}%", (right_volume * 100.0).round() as u32),
-            self.config.theme.volume,
-        ))
-        .render(label_r, buf);
+        let right_percent = if self.node.mute {
+            "muted".to_string()
+        } else {
+            format!("{}%", (right_volume * 100.0).round() as u32)
+        };
+        Line::from(Span::styled(right_percent, self.config.theme.volume))
+            .render(label_r, buf);
 
         Line::from(Span::styled("|", self.config.theme.volume))
             .alignment(Alignment::Center)
@@ -1515,6 +1556,11 @@ impl StatefulWidget for ChannelRowWidget<'_> {
 const RADIATING_LABEL_WIDTH: u16 =
     (channel_pairing::MAX_GROUP_NAME_WIDTH + 4) as u16;
 
+/// `RadiatingRowWidget`'s label_l/label_r width - fits `"100%"` or, once
+/// muted, `"muted"` (5 characters), matching `ChannelRowWidget`'s own
+/// percent_col precedent. 4 would truncate "muted" to "uted".
+const RADIATING_PERCENT_WIDTH: u16 = 5;
+
 /// `VolumeWidget`'s label width in `Linked`/`Channels` view - wide
 /// enough for `"{index} {percent}%"` (`unified_imbalance = "cycle"`'s
 /// label; up to 6 characters, e.g. `"1 100%"`) as well as the plain
@@ -1535,8 +1581,11 @@ const RADIATING_LABEL_WIDTH: u16 =
 /// than by coincidence.
 ///
 /// `Unified` view doesn't use this at all - see
-/// `STOCK_VOLUME_LABEL_WIDTH`/`STOCK_VOLUME_LABEL_WIDTH_CYCLING`.
-const VOLUME_LABEL_WIDTH: u16 = 12;
+/// `STOCK_VOLUME_LABEL_WIDTH`/`STOCK_VOLUME_LABEL_WIDTH_CYCLING`. 13,
+/// not 12, to stay aligned with `StereoVolumeWidget`/`RadiatingRowWidget`'s
+/// own bar_l start now that `RADIATING_PERCENT_WIDTH` (5, wide enough
+/// to fit "muted") grew from the previous 4.
+const VOLUME_LABEL_WIDTH: u16 = 13;
 
 /// `VolumeWidget`'s label width in `Unified` view (channel_mode off,
 /// channel_display = "unified") when `unified_imbalance` isn't
@@ -1550,9 +1599,11 @@ const STOCK_VOLUME_LABEL_WIDTH: u16 = 7;
 /// Same as `STOCK_VOLUME_LABEL_WIDTH`, but for a Unified-view list
 /// where `unified_imbalance = "cycle"` is turned on - wide enough for
 /// `channel_col`(`CYCLING_CHANNEL_LABEL_WIDTH`) + spacing(1) +
-/// `percent_col`(4), plus the same 2-column fold.
+/// `percent_col`(5 - fits "muted" as well as "100%", see
+/// `VolumeWidget::render`'s own `percent_col_width`), plus the same
+/// 2-column fold.
 const STOCK_VOLUME_LABEL_WIDTH_CYCLING: u16 =
-    CYCLING_CHANNEL_LABEL_WIDTH + 1 + 4 + 2;
+    CYCLING_CHANNEL_LABEL_WIDTH + 1 + 5 + 2;
 
 /// `VolumeWidget`'s cycling label column width in `Unified` view - fits
 /// a simple pair's `"L"`/`"R"`, most named positions (`"FL"`, `"RR"`,
@@ -1568,8 +1619,11 @@ const CYCLING_CHANNEL_LABEL_WIDTH: u16 = 4;
 /// first segment in `StereoVolumeWidget`'s own layout, so its width is
 /// what determines the bar's absolute start column - `label_r` (below)
 /// comes after both bars and never needs to line up with anything
-/// external.
-const STEREO_LABEL_L_WIDTH: u16 = 12;
+/// external. 13, not 12, to stay aligned with `RadiatingRowWidget`'s own
+/// bar_l start now that its `label_l`/`label_r` are
+/// `RADIATING_PERCENT_WIDTH` (5, wide enough to fit "muted") rather
+/// than the previous 4.
+const STEREO_LABEL_L_WIDTH: u16 = 13;
 
 /// `StereoVolumeWidget`'s label_r width. Its content (a plain
 /// `"{percent}%"`) never needs all of this width - the leading column
@@ -1648,7 +1702,10 @@ impl<'a> RadiatingRowWidget<'a> {
     /// blank) the divider/right-bar/right-label columns, so every row in
     /// the block agrees on where the bar starts and how long it can get.
     fn bar_width(content_width: u16) -> u16 {
-        let fixed_width = RADIATING_LABEL_WIDTH + 4 + 1 + 4; // label + label_l + center + label_r
+        let fixed_width = RADIATING_LABEL_WIDTH
+            + RADIATING_PERCENT_WIDTH
+            + 1
+            + RADIATING_PERCENT_WIDTH; // label + label_l + center + label_r
         let spacing_width = 5; // 5 gaps between the 6 segments, at 1 each
         content_width.saturating_sub(fixed_width + spacing_width) / 2
     }
@@ -1673,24 +1730,6 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
             (volume_area, Some(meter_area))
         };
 
-        if self.node.mute {
-            Line::from("muted")
-                .alignment(Alignment::Center)
-                .render(row_area, buf);
-            mouse_areas.push((
-                row_area,
-                smallvec![MouseEventKind::Down(MouseButton::Left)],
-                smallvec![
-                    Action::SelectObject(self.node.object_id),
-                    Action::ToggleMute
-                ],
-            ));
-            if let Some(meter_area) = meter_area {
-                self.render_meter(meter_area, buf);
-            }
-            return;
-        }
-
         let max_volume = self.config.max_volume_percent / 100.0;
 
         // An unpaired channel's row normally reserves (but leaves
@@ -1709,17 +1748,17 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
             .constraints(if expand_unpaired {
                 vec![
                     Constraint::Length(RADIATING_LABEL_WIDTH), // label
-                    Constraint::Length(4),                     // label_l
+                    Constraint::Length(RADIATING_PERCENT_WIDTH), // label_l
                     Constraint::Min(0),                        // bar_l
                 ]
             } else {
                 vec![
                     Constraint::Length(RADIATING_LABEL_WIDTH), // label
-                    Constraint::Length(4),                     // label_l
+                    Constraint::Length(RADIATING_PERCENT_WIDTH), // label_l
                     Constraint::Length(self.bar_width),        // bar_l
                     Constraint::Length(1),                     // center
                     Constraint::Length(self.bar_width),        // bar_r
-                    Constraint::Length(4),                     // label_r
+                    Constraint::Length(RADIATING_PERCENT_WIDTH), // label_r
                 ]
             })
             .spacing(1)
@@ -1744,12 +1783,18 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         let left_volume =
             volumes.get(self.left_index).copied().unwrap_or(0.0).cbrt();
 
-        Line::from(Span::styled(
-            format!("{}%", (left_volume * 100.0).round() as u32),
-            self.config.theme.volume,
-        ))
-        .alignment(Alignment::Right)
-        .render(label_l, buf);
+        // Mute is a single node-level property (SPA_PROP_mute), not
+        // per-channel, so it replaces the percent text alone - the bar
+        // still renders normally either way (same convention
+        // ChannelRowWidget's percent_col uses).
+        let left_percent = if self.node.mute {
+            "muted".to_string()
+        } else {
+            format!("{}%", (left_volume * 100.0).round() as u32)
+        };
+        Line::from(Span::styled(left_percent, self.config.theme.volume))
+            .alignment(Alignment::Right)
+            .render(label_l, buf);
 
         let left_count = ((left_volume.clamp(0.0, max_volume) / max_volume)
             * bar_l.width as f32)
@@ -1836,11 +1881,13 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         let right_volume =
             volumes.get(right_index).copied().unwrap_or(0.0).cbrt();
 
-        Line::from(Span::styled(
-            format!("{}%", (right_volume * 100.0).round() as u32),
-            self.config.theme.volume,
-        ))
-        .render(label_r, buf);
+        let right_percent = if self.node.mute {
+            "muted".to_string()
+        } else {
+            format!("{}%", (right_volume * 100.0).round() as u32)
+        };
+        Line::from(Span::styled(right_percent, self.config.theme.volume))
+            .render(label_r, buf);
 
         Line::from(Span::styled("|", self.config.theme.volume))
             .alignment(Alignment::Center)
@@ -2033,8 +2080,11 @@ mod tests {
         };
         let (volume_area, meter_area) = split_meter_row(area, layout);
         assert_eq!(volume_area.width, 50);
-        assert_eq!(meter_area.width, 50);
-        assert_eq!(meter_area.x, 50);
+        // gap = 0 is a floor, not an exact override - it still scales
+        // up with the 50-wide meter side (see effective_gap), landing
+        // at 50.div_ceil(8) = 7 here even though 0 was configured.
+        assert_eq!(meter_area.width, 43);
+        assert_eq!(meter_area.x, 57);
     }
 
     #[test]
@@ -2071,10 +2121,23 @@ mod tests {
         };
         let (volume_area, meter_area) = split_meter_row(area, layout);
         assert_eq!(volume_area.width, 50);
-        // meter_side is 50 wide; gap(3) leads, right_margin(7) trails,
-        // leaving 50 - 3 - 7 = 40 for the meter itself.
-        assert_eq!(meter_area.width, 40);
-        assert_eq!(meter_area.x, 50 + 3);
+        // meter_side is 50 wide; the configured gap floor (3) is below
+        // what 50.div_ceil(8) = 7 scales up to, so the effective gap is
+        // 7, not 3 - leaving 50 - 7 - 7 = 36 for the meter itself.
+        assert_eq!(meter_area.width, 36);
+        assert_eq!(meter_area.x, 50 + 7);
+    }
+
+    #[test]
+    fn effective_gap_scales_up_with_available_width_above_the_floor() {
+        // Narrow meter side: the configured floor wins.
+        assert_eq!(effective_gap(2, 8), 2);
+        // Wide meter side: scaling (1-in-8 of the meter side's own
+        // width) wins over a small floor.
+        assert_eq!(effective_gap(2, 80), 10);
+        // A larger configured floor still wins over scaling when it's
+        // the bigger of the two.
+        assert_eq!(effective_gap(5, 8), 5);
     }
 
     #[test]
@@ -2216,6 +2279,29 @@ mod tests {
         assert_eq!(
             left_filled, right_filled,
             "equal L/R volumes must fill an equal number of characters on each side"
+        );
+    }
+
+    #[test]
+    fn stereo_volume_mute_overrides_only_the_percent_labels() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let mut node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
+        node.mute = true;
+        let config =
+            config::Config::from_toml_str("channel_display = \"always\"");
+
+        let rendered = render_to_string(&config, &node);
+
+        // Both channels' percent text becomes "muted", but the row
+        // structure (divider) still renders - a lone stereo pair's
+        // muted row must not collapse into one big centered "muted"
+        // spanning the whole row, which used to blank out the divider
+        // and both bars entirely.
+        assert_eq!(rendered.matches("muted").count(), 2);
+        assert!(
+            rendered.contains('|'),
+            "the center divider must still render while muted"
         );
     }
 
@@ -2387,9 +2473,9 @@ mod tests {
             .find(cycle_config.char_set.volume_filled.as_str())
             .expect("a filled bar somewhere");
         assert_eq!(
-            imbalanced_bar_start, 12,
+            imbalanced_bar_start, 13,
             "a row actually showing a cycling channel's own value \
-             widens to fit a channel label plus percentage (11) + 1 \
+             widens to fit a channel label plus percentage (12) + 1 \
              spacing (see CYCLING_CHANNEL_LABEL_WIDTH)"
         );
     }
@@ -2454,9 +2540,75 @@ mod tests {
         // Channel 0's own 100% (not the 79% mean the same node showed in
         // the unified_imbalance = "none" test above) - labeled "L" since
         // this node is a simple FL/FR pair (see single_pair), not the
-        // raw index.
-        assert!(rendered.contains("L 100%"));
+        // raw index. Two spaces, not one: percent_col is 5 wide (to fit
+        // "muted" without truncating), and "100%" is only 4, leaving
+        // its own 1-column leading pad on top of the normal 1-column
+        // spacing before it.
+        assert!(rendered.contains("L  100%"));
         assert!(!rendered.contains("79%"));
+    }
+
+    #[test]
+    fn unified_imbalance_cycle_bar_immediately_follows_the_percent() {
+        // Regression test: a bug in how channel_col/percent_col were
+        // split out of volume_label left 2 blank columns stranded
+        // between "%" and the bar (ratatui's default flex packs Length
+        // constraints at the *start* of the area they're given and
+        // leaves any shortfall trailing at the end, rather than at the
+        // front where the alignment fold is meant to sit). The bar must
+        // start exactly 1 column (the normal spacing) after "%", not 3.
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        let config = config::Config::from_toml_str(
+            "channel_display = \"unified\"\nunified_imbalance = \"cycle\"",
+        );
+
+        let rendered = render_to_string(&config, &node);
+        let percent_end = rendered.find('%').expect("a percent sign") + 1;
+        let bar_start = rendered
+            .find(config.char_set.volume_filled.as_str())
+            .expect("a filled bar somewhere");
+
+        assert_eq!(
+            bar_start - percent_end,
+            1,
+            "exactly 1 spacing column must separate \"%\" from the bar, \
+             not 3"
+        );
+    }
+
+    #[test]
+    fn unified_imbalance_cycle_mute_overrides_only_the_percent() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let mut node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        node.mute = true;
+        let config = config::Config::from_toml_str(
+            "channel_display = \"unified\"\nunified_imbalance = \"cycle\"",
+        );
+
+        let rendered = render_to_string(&config, &node);
+
+        // The channel label ("L") must still show even while muted -
+        // only the percent text becomes "muted", not the whole label
+        // area.
+        assert!(
+            rendered.contains("L muted") || rendered.contains("Lmuted"),
+            "channel label must survive muting, only the percent \
+             becomes \"muted\": {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn unified_view_mute_overrides_only_the_percent_not_the_bar() {
+        let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
+        let mut node = test_node(Some(vec![mono]), vec![1.0]);
+        node.mute = true;
+        let config = config::Config::from_toml_str("");
+
+        let rendered = render_to_string(&config, &node);
+        assert!(rendered.contains("muted"));
     }
 
     #[test]
@@ -3211,6 +3363,32 @@ mod tests {
 
         assert!(lines[1].contains('F'));
         assert!(!lines[1].contains("L|R"));
+    }
+
+    #[test]
+    fn radiating_row_mute_overrides_only_the_percent_labels() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        let mut node = test_node(Some(vec![fl, fr, fc]), vec![1.0, 1.0, 1.0]);
+        node.mute = true;
+        let config = config::Config::from_toml_str(
+            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+             peaks = \"off\"",
+        );
+
+        let lines = render_node_lines(&config, &node, false, false, None);
+        assert_eq!(lines.len(), 3); // header + pair row + single row
+
+        // The pair row's divider must still render (not collapsed into
+        // one centered "muted" spanning the whole row), and both rows'
+        // percent text becomes "muted".
+        assert!(
+            lines[1].contains('|'),
+            "the paired row's center divider must still render while muted"
+        );
+        assert_eq!(lines[1].matches("muted").count(), 2);
+        assert_eq!(lines[2].matches("muted").count(), 1);
     }
 
     #[test]
