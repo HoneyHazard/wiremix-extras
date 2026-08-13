@@ -38,6 +38,8 @@ pub struct Config {
     pub theme: Theme,
     pub show_dividers: bool,
     pub compact_layout: bool,
+    pub row_selected_extend_above: bool,
+    pub row_selected_extend_below: bool,
     pub max_volume_percent: f32,
     pub enforce_max_volume: bool,
     pub keybindings: HashMap<KeyEvent, Action>,
@@ -72,6 +74,10 @@ struct ConfigFile {
     show_dividers: bool,
     #[serde(default = "default_compact_layout")]
     compact_layout: bool,
+    #[serde(default = "default_row_selected_extend")]
+    row_selected_extend_above: bool,
+    #[serde(default = "default_row_selected_extend")]
+    row_selected_extend_below: bool,
     #[serde(default = "default_max_volume_percent")]
     max_volume_percent: Option<f32>,
     #[serde(default = "default_enforce_max_volume")]
@@ -210,6 +216,8 @@ pub struct Theme {
     pub config_device: Style,
     pub config_profile: Style,
     pub row_hidden: Style,
+    pub row_selected: Style,
+    pub row_unselected: Style,
     pub dropdown_icon: Style,
     pub dropdown_border: Style,
     pub dropdown_item: Style,
@@ -300,6 +308,10 @@ fn default_compact_layout() -> bool {
 
 fn default_capture_hidden() -> bool {
     true
+}
+
+fn default_row_selected_extend() -> bool {
+    false
 }
 
 impl ConfigFile {
@@ -507,6 +519,8 @@ impl TryFrom<ConfigFile> for Config {
             theme,
             show_dividers: config_file.show_dividers,
             compact_layout: config_file.compact_layout,
+            row_selected_extend_above: config_file.row_selected_extend_above,
+            row_selected_extend_below: config_file.row_selected_extend_below,
             keybindings: config_file.keybindings,
             help,
             names: config_file.names,
@@ -589,6 +603,8 @@ pub mod strict {
         theme: String,
         show_dividers: bool,
         compact_layout: bool,
+        row_selected_extend_above: bool,
+        row_selected_extend_below: bool,
         max_volume_percent: Option<f32>,
         enforce_max_volume: bool,
         lenient_config: bool,
@@ -619,6 +635,8 @@ pub mod strict {
                 theme: strict.theme,
                 show_dividers: strict.show_dividers,
                 compact_layout: strict.compact_layout,
+                row_selected_extend_above: strict.row_selected_extend_above,
+                row_selected_extend_below: strict.row_selected_extend_below,
                 max_volume_percent: strict.max_volume_percent,
                 enforce_max_volume: strict.enforce_max_volume,
                 lenient_config: strict.lenient_config,

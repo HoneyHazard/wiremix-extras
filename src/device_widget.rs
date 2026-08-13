@@ -3,6 +3,7 @@
 use ratatui::{
     layout::Flex,
     prelude::{Buffer, Constraint, Direction, Layout, Rect},
+    style::Style,
     text::{Line, Span},
     widgets::{StatefulWidget, Widget},
 };
@@ -80,12 +81,29 @@ impl<'a> DeviceWidget<'a> {
 
         Rect::new(x, y, width, height)
     }
+
+    /// See `node_widget::HeaderWidget::text_style`.
+    fn text_style(&self, style: Style) -> Style {
+        if self.selected {
+            style
+        } else {
+            style.patch(self.config.theme.row_unselected)
+        }
+    }
 }
 
 impl StatefulWidget for DeviceWidget<'_> {
     type State = Vec<MouseArea>;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        // See node_widget::NodeWidget::render - same whole-row background
+        // fill so the Configuration tab gets the same selected-row
+        // highlight as the other tabs, covering blank space too rather
+        // than just the text glyphs.
+        if self.selected {
+            buf.set_style(area, self.config.theme.row_selected);
+        }
+
         let mouse_areas = state;
 
         mouse_areas.push((
@@ -183,7 +201,7 @@ impl StatefulWidget for DeviceWidget<'_> {
         Line::from(vec![
             Span::from("   "),
             hidden_prefix,
-            Span::styled(&self.device.title, title_style),
+            Span::styled(&self.device.title, self.text_style(title_style)),
         ])
         .render(title_area, buf);
 
@@ -210,7 +228,10 @@ impl StatefulWidget for DeviceWidget<'_> {
                 dropdown_icon_style,
             ),
             Span::from(" "),
-            Span::styled(&self.device.target_title, profile_style),
+            Span::styled(
+                &self.device.target_title,
+                self.text_style(profile_style),
+            ),
         ])
         .render(target_area, buf);
 

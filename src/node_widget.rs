@@ -100,6 +100,18 @@ impl StatefulWidget for NodeWidget<'_> {
     type State = Vec<MouseArea>;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        // Fill the whole row's background first (not just under the text)
+        // when selected. ratatui's Cell::set_style only overwrites fg/bg
+        // when the incoming style has Some(...) for that field - unstyled
+        // spans (node_title etc. default to `{ }`) leave this fill alone,
+        // while spans that set their own color explicitly (meter_active,
+        // volume_filled...) still override it for their own glyphs. So a
+        // single fill here covers blank padding/gaps that per-span styling
+        // could never reach, while every other color stays meaningful.
+        if self.selected {
+            buf.set_style(area, self.config.theme.row_selected);
+        }
+
         let mouse_areas = state;
 
         mouse_areas.extend([
@@ -174,6 +186,7 @@ impl StatefulWidget for NodeWidget<'_> {
             self.node,
             self.hidden_instance,
             self.hidden_permanent,
+            self.selected,
         )
         .render(header_area, buf, mouse_areas);
 
@@ -182,6 +195,7 @@ impl StatefulWidget for NodeWidget<'_> {
             self.config,
             self.node,
             self.hidden_instance || self.hidden_permanent,
+            self.selected,
         );
         if self.config.peaks == Peaks::Off {
             let layout = Layout::default()
@@ -289,6 +303,7 @@ struct HeaderWidget<'a> {
     node: &'a view::Node,
     hidden_instance: bool,
     hidden_permanent: bool,
+    selected: bool,
 }
 
 impl<'a> HeaderWidget<'a> {
@@ -298,6 +313,7 @@ impl<'a> HeaderWidget<'a> {
         node: &'a view::Node,
         hidden_instance: bool,
         hidden_permanent: bool,
+        selected: bool,
     ) -> Self {
         Self {
             config,
@@ -305,6 +321,7 @@ impl<'a> HeaderWidget<'a> {
             node,
             hidden_instance,
             hidden_permanent,
+            selected,
         }
     }
 
@@ -323,6 +340,19 @@ impl<'a> HeaderWidget<'a> {
         }
     }
 
+    /// Patches `row_unselected` on top of `style` when this row isn't the
+    /// selected one. Unlike `row_selected` (a whole-row background fill
+    /// applied unconditionally in `NodeWidget::render`), this only ever
+    /// touches text spans, so it's applied per-span rather than as a
+    /// single area fill.
+    fn text_style(&self, style: Style) -> Style {
+        if self.selected {
+            style
+        } else {
+            style.patch(self.config.theme.row_unselected)
+        }
+    }
+
     fn target_line(&self) -> Line<'_> {
         let target_style = self.hidden_style(self.config.theme.node_target);
         match self.node.target {
@@ -334,12 +364,16 @@ impl<'a> HeaderWidget<'a> {
                         self.hidden_style(self.config.theme.default_stream),
                     ),
                     Span::from(" "),
-                    Span::styled(&self.node.target_title, target_style),
+                    Span::styled(
+                        &self.node.target_title,
+                        self.text_style(target_style),
+                    ),
                 ])
             }
-            _ => {
-                Line::from(Span::styled(&self.node.target_title, target_style))
-            }
+            _ => Line::from(Span::styled(
+                &self.node.target_title,
+                self.text_style(target_style),
+            )),
         }
     }
 
@@ -364,7 +398,7 @@ impl<'a> HeaderWidget<'a> {
             default_span,
             Span::from(" "),
             hidden_prefix,
-            Span::styled(&self.node.title, title_style),
+            Span::styled(&self.node.title, self.text_style(title_style)),
         ])
     }
 }
@@ -411,7 +445,7 @@ impl StatefulWidget for HeaderWidget<'_> {
             let ellipses_area = layout[1];
             target_area = layout[3];
 
-            Span::styled("...", self.config.theme.node_title)
+            Span::styled("...", self.text_style(self.config.theme.node_title))
                 .render(ellipses_area, buf);
         }
         let (title_area, target_area) = (title_area, target_area);
@@ -437,14 +471,39 @@ struct VolumeWidget<'a> {
     config: &'a Config,
     node: &'a view::Node,
     hidden: bool,
+    selected: bool,
 }
 
 impl<'a> VolumeWidget<'a> {
-    fn new(config: &'a Config, node: &'a view::Node, hidden: bool) -> Self {
+    fn new(
+        config: &'a Config,
+        node: &'a view::Node,
+        hidden: bool,
+        selected: bool,
+    ) -> Self {
         Self {
             config,
             node,
             hidden,
+            selected,
+        }
+    }
+
+    /// See `HeaderWidget::hidden_style`.
+    fn hidden_style(&self, base: Style) -> Style {
+        if self.hidden {
+            base.patch(self.config.theme.row_hidden)
+        } else {
+            base
+        }
+    }
+
+    /// See `HeaderWidget::text_style`.
+    fn text_style(&self, style: Style) -> Style {
+        if self.selected {
+            style
+        } else {
+            style.patch(self.config.theme.row_unselected)
         }
     }
 }
@@ -474,14 +533,13 @@ impl StatefulWidget for VolumeWidget<'_> {
             let volume = mean.cbrt();
             let percent = (volume * 100.0).round() as u32;
 
-            let volume_style = if self.hidden {
-                self.config.theme.volume.patch(self.config.theme.row_hidden)
-            } else {
-                self.config.theme.volume
-            };
-            Line::from(Span::styled(format!("{percent}%"), volume_style))
-                .alignment(Alignment::Right)
-                .render(volume_label, buf);
+            let volume_style = self.hidden_style(self.config.theme.volume);
+            Line::from(Span::styled(
+                format!("{percent}%"),
+                self.text_style(volume_style),
+            ))
+            .alignment(Alignment::Right)
+            .render(volume_label, buf);
 
             let count = ((volume.clamp(0.0, max_volume) / max_volume)
                 * volume_bar.width as f32)
@@ -500,7 +558,11 @@ impl StatefulWidget for VolumeWidget<'_> {
             .render(volume_bar, buf);
         }
         if self.node.mute {
-            Line::from("muted").render(volume_label, buf);
+            Line::from(Span::styled(
+                "muted",
+                self.text_style(Style::default()),
+            ))
+            .render(volume_label, buf);
         }
 
         mouse_areas.push((

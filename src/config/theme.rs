@@ -30,6 +30,10 @@ pub struct ThemeOverlay {
     config_device: Option<StyleDef>,
     config_profile: Option<StyleDef>,
     row_hidden: Option<StyleDef>,
+    // Whole-row overlays: span everything above, from node_title/config_device
+    // through config_profile, in both the node list and the Configuration tab.
+    row_selected: Option<StyleDef>,
+    row_unselected: Option<StyleDef>,
     dropdown_icon: Option<StyleDef>,
     dropdown_border: Option<StyleDef>,
     dropdown_item: Option<StyleDef>,
@@ -110,6 +114,8 @@ impl TryFrom<ThemeOverlay> for Theme {
         set!(config_device);
         set!(config_profile);
         set!(row_hidden);
+        set!(row_selected);
+        set!(row_unselected);
         set!(dropdown_icon);
         set!(dropdown_border);
         set!(dropdown_item);
@@ -147,6 +153,8 @@ impl Default for Theme {
             config_device: Style::default(),
             config_profile: Style::default(),
             row_hidden: Style::default().fg(Color::DarkGray),
+            row_selected: Style::default(),
+            row_unselected: Style::default(),
             dropdown_icon: Style::default(),
             dropdown_border: Style::default(),
             dropdown_item: Style::default(),
@@ -193,6 +201,8 @@ impl Theme {
             config_device: Style::default(),
             config_profile: Style::default(),
             row_hidden: Style::default().add_modifier(Modifier::DIM),
+            row_selected: Style::default(),
+            row_unselected: Style::default(),
             dropdown_icon: Style::default(),
             dropdown_border: Style::default(),
             dropdown_item: Style::default(),
@@ -228,6 +238,8 @@ impl Theme {
             config_device: Style::default(),
             config_profile: Style::default(),
             row_hidden: Style::default(),
+            row_selected: Style::default(),
+            row_unselected: Style::default(),
             dropdown_icon: Style::default(),
             dropdown_border: Style::default(),
             dropdown_item: Style::default(),
