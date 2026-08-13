@@ -95,6 +95,16 @@ pub struct Opt {
     #[clap(long, conflicts_with = "no_compact_layout")]
     pub compact_layout: bool,
 
+    /// Fail to start if the configuration contains any unknown fields
+    /// (default)
+    #[clap(long, conflicts_with = "lenient_config")]
+    pub no_lenient_config: bool,
+
+    /// Ignore unknown configuration fields (logging a warning for each)
+    /// instead of failing to start
+    #[clap(long, conflicts_with = "no_lenient_config")]
+    pub lenient_config: bool,
+
     #[cfg(debug_assertions)]
     #[clap(short, long)]
     pub dump_events: bool,

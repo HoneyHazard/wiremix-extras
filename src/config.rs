@@ -53,7 +53,6 @@ pub struct Config {
 /// Config, which, for example, has a single char_set and theme.
 #[derive(Deserialize, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
-#[serde(deny_unknown_fields)]
 struct ConfigFile {
     remote: Option<String>,
     #[serde(default = "default_fps")]
@@ -74,6 +73,8 @@ struct ConfigFile {
     max_volume_percent: Option<f32>,
     #[serde(default = "default_enforce_max_volume")]
     enforce_max_volume: bool,
+    #[serde(default = "default_lenient_config")]
+    lenient_config: bool,
     #[serde(
         default = "Keybinding::defaults",
         deserialize_with = "Keybinding::merge"
@@ -108,7 +109,6 @@ pub enum Peaks {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(deny_unknown_fields)]
 pub struct Keybinding {
     pub key: KeyCode,
     #[serde(default = "Keybinding::default_modifiers")]
@@ -118,7 +118,6 @@ pub struct Keybinding {
 
 #[derive(Deserialize, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
-#[serde(deny_unknown_fields)]
 pub struct Names {
     #[serde(default = "Names::default_stream")]
     pub stream: Vec<names::NameTemplate>,
@@ -213,7 +212,6 @@ pub struct Theme {
 
 #[derive(Debug, Deserialize)]
 #[cfg_attr(test, derive(PartialEq))]
-#[serde(deny_unknown_fields)]
 pub struct Filter {
     pub id: Option<String>,
     pub matches: Vec<MatchCondition>,
@@ -271,6 +269,10 @@ fn default_max_volume_percent() -> Option<f32> {
 }
 
 fn default_enforce_max_volume() -> bool {
+    false
+}
+
+fn default_lenient_config() -> bool {
     false
 }
 
@@ -360,6 +362,54 @@ impl ConfigFile {
         if opt.compact_layout {
             self.compact_layout = true;
         }
+
+        if opt.no_lenient_config {
+            self.lenient_config = false;
+        }
+
+        if opt.lenient_config {
+            self.lenient_config = true;
+        }
+    }
+
+    /// Parses `toml_str` into a `ConfigFile`, then applies `opt`'s
+    /// overrides. Unknown fields anywhere in the file - top-level or
+    /// nested inside `[[keybindings]]`, `[themes.*]`, `[char_sets.*]`,
+    /// etc. - are collected rather than failing on just the first one
+    /// found. If `lenient_config` ends up `false` (the default, after
+    /// `opt` has had a chance to override it), any unknown fields turn
+    /// into a single aggregated error; if `true`, each one is only
+    /// logged as a warning and parsing proceeds using defaults for the
+    /// rest of that value.
+    fn parse(toml_str: &str, opt: &Opt) -> anyhow::Result<Self> {
+        let mut unknown_fields = Vec::new();
+        let deserializer = toml::Deserializer::parse(toml_str)?;
+        let mut config_file: Self =
+            serde_ignored::deserialize(deserializer, |path| {
+                unknown_fields.push(path.to_string());
+            })?;
+
+        config_file.apply_opt(opt);
+
+        if !unknown_fields.is_empty() {
+            if config_file.lenient_config {
+                for field in &unknown_fields {
+                    eprintln!(
+                        "wiremix: warning: ignoring unknown configuration \
+                         field '{field}'"
+                    );
+                }
+            } else {
+                anyhow::bail!(
+                    "unknown configuration field(s): {} (pass \
+                     --lenient-config, or set lenient_config = true, to \
+                     ignore instead of failing)",
+                    unknown_fields.join(", ")
+                );
+            }
+        }
+
+        Ok(config_file)
     }
 }
 
@@ -454,7 +504,7 @@ impl Config {
         path: Option<&Path>,
         opt: &Opt,
     ) -> Result<Self, anyhow::Error> {
-        let mut config_file: ConfigFile = match path {
+        let config_file = match path {
             Some(path) if path.exists() => {
                 let context = || {
                     format!(
@@ -466,20 +516,17 @@ impl Config {
                 let toml_str =
                     fs::read_to_string(path).with_context(context)?;
 
-                toml::from_str(&toml_str).with_context(context)?
+                ConfigFile::parse(&toml_str, opt).with_context(context)?
             }
-            _ => toml::from_str("")?,
+            _ => ConfigFile::parse("", opt)?,
         };
-        // Override with command-line options
-        config_file.apply_opt(opt);
-        let config_file = config_file;
 
         Self::try_from(config_file)
     }
 
     #[cfg(test)]
     pub fn from_toml_str(toml: &str) -> Self {
-        let config_file: ConfigFile = toml::from_str(toml).unwrap();
+        let config_file = ConfigFile::parse(toml, &Opt::default()).unwrap();
         Self::try_from(config_file).unwrap()
     }
 }
@@ -507,6 +554,7 @@ pub mod strict {
         compact_layout: bool,
         max_volume_percent: Option<f32>,
         enforce_max_volume: bool,
+        lenient_config: bool,
         #[serde(deserialize_with = "keybindings")]
         keybindings: HashMap<KeyEvent, Action>,
         names: Names,
@@ -533,6 +581,7 @@ pub mod strict {
                 compact_layout: strict.compact_layout,
                 max_volume_percent: strict.max_volume_percent,
                 enforce_max_volume: strict.enforce_max_volume,
+                lenient_config: strict.lenient_config,
                 keybindings: strict.keybindings,
                 names: strict.names,
                 char_sets: strict.char_sets,
@@ -600,41 +649,87 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unknown_field_config_file() {
-        let config = r#"
-        unknown = "unknown"
-        "#;
-        assert!(toml::from_str::<ConfigFile>(config).is_err());
+    fn unknown_field_top_level_errors_by_default() {
+        let result =
+            ConfigFile::parse("unknown = \"unknown\"", &Opt::default());
+        assert!(result.is_err());
     }
 
     #[test]
-    fn unknown_field_keybinding() {
+    fn unknown_field_keybinding_errors_by_default() {
         let config = r#"
-        key = { Char = "x" }
-        action = "Nothing"
-        unknown = "unknown"
+        keybindings = [
+            { key = { Char = "x" }, action = "Nothing", unknown = "unknown" },
+        ]
         "#;
-        assert!(toml::from_str::<Keybinding>(config).is_err());
+        assert!(ConfigFile::parse(config, &Opt::default()).is_err());
     }
 
     #[test]
-    fn unknown_field_names() {
-        let config = r#"
-        unknown = "unknown"
-        "#;
-        assert!(toml::from_str::<Names>(config).is_err());
+    fn unknown_field_names_errors_by_default() {
+        let config = "[names]\nunknown = \"unknown\"";
+        assert!(ConfigFile::parse(config, &Opt::default()).is_err());
     }
 
     #[test]
-    fn unknown_field_name_override() {
+    fn unknown_field_name_override_errors_by_default() {
         let config = r#"
-        types = [ "stream" ]
-        property = "node:node.name"
-        value = "value"
-        templates = [ "template" ]
-        unknown = "unknown"
+        [names]
+        overrides = [
+            {
+                types = [ "stream" ],
+                property = "node:node.name",
+                value = "value",
+                templates = [ "template" ],
+                unknown = "unknown",
+            },
+        ]
         "#;
-        assert!(toml::from_str::<NameOverride>(config).is_err());
+        assert!(ConfigFile::parse(config, &Opt::default()).is_err());
+    }
+
+    #[test]
+    fn unknown_field_nested_theme_errors_by_default() {
+        let config = "[themes.default]\nunknown = { }";
+        assert!(ConfigFile::parse(config, &Opt::default()).is_err());
+    }
+
+    #[test]
+    fn unknown_field_nested_char_set_errors_by_default() {
+        let config = "[char_sets.default]\nunknown = \"x\"";
+        assert!(ConfigFile::parse(config, &Opt::default()).is_err());
+    }
+
+    #[test]
+    fn unknown_field_lenient_via_config_file_is_ignored() {
+        let config = "lenient_config = true\nunknown = \"unknown\"";
+        assert!(ConfigFile::parse(config, &Opt::default()).is_ok());
+    }
+
+    #[test]
+    fn unknown_field_lenient_via_cli_flag_is_ignored() {
+        let opt = Opt {
+            lenient_config: true,
+            ..Default::default()
+        };
+        let result = ConfigFile::parse("unknown = \"unknown\"", &opt);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cli_no_lenient_config_overrides_config_file_lenient() {
+        let opt = Opt {
+            no_lenient_config: true,
+            ..Default::default()
+        };
+        let config = "lenient_config = true\nunknown = \"unknown\"";
+        assert!(ConfigFile::parse(config, &opt).is_err());
+    }
+
+    #[test]
+    fn no_unknown_fields_ok_even_when_strict() {
+        let result = ConfigFile::parse("fps = 30.0", &Opt::default());
+        assert!(result.is_ok());
     }
 
     #[test]
