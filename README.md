@@ -1,3 +1,80 @@
+# wiremix-extras
+
+This repository is an experiment: it takes [tsowell/wiremix](https://github.com/tsowell/wiremix)
+and combines a set of independent feature branches from
+[HoneyHazard/wiremix](https://github.com/HoneyHazard/wiremix) — each already
+proposed upstream as its own focused pull request — into one build, so the
+combination can be evaluated as a whole rather than one change at a time.
+It exists purely as a convenience for trying things out; it isn't a
+statement that any of this belongs upstream, and every feature here remains
+available as its own small, independently-reviewable PR against the
+original project. Feedback on either the individual PRs or the combined
+experience here is very welcome.
+
+## What's included
+
+- **Item dividers** — an optional line drawn between list items, for
+  visually busy tabs.
+- **Compact layout** — an optional shorter per-item layout that fits more
+  on screen at once.
+- **Peak-monitoring reliability and efficiency** — evicted capture streams
+  are disconnected before being dropped (avoiding a leak under frequent
+  capture rotation), capture streams opt out of WirePlumber's state
+  persistence, and the number of simultaneously-open capture streams can be
+  capped and rotated, both per instance and (best-effort) across every
+  running instance at once.
+- **Lenient config parsing** — an option to ignore unknown configuration
+  fields (with a warning) instead of failing to start, for config files
+  shared across versions.
+- **F1–F5 tab shortcuts** — default keybindings to jump straight to a tab
+  by position.
+- **PageUp/PageDown/Home/End navigation**.
+- **Hide/show for list items** — per-instance (`t`) and permanent,
+  cross-instance-synced (`Ctrl+t`) hiding, with an option to exclude hidden
+  items from peak monitoring on top of any other capture limits.
+- **Selected-row text theming** — `row_selected`/`row_unselected` theme
+  keys for customizing how the current row's text (not just its
+  background) is highlighted.
+- **A built-in dark theme** (`-t redshift -s redshift_compact`) — ready to
+  try with no configuration file needed.
+- **Multichannel and channel-pairing support** — per-channel volume
+  control, an optional split display for a node's individual channels
+  (radiating from a shared center marker for a detected stereo pair, or
+  stacked one row per channel/group), a dedicated Channel mode for
+  addressing one channel at a time, and configurable per-view layout. This
+  is by far the largest change here — see its own section below.
+
+<!-- TODO: screenshots (default theme, dark theme) -->
+
+## Merge sequence
+
+`main` is built by merging each feature branch into classic wiremix's own
+`main`, in this order — real merges, each keeping its own commit history,
+not squashes. Every step before the last has an open pull request against
+`tsowell/wiremix`; reproducing this build from scratch means merging them
+in the same order.
+
+1. [item-dividers](https://github.com/tsowell/wiremix/pull/68)
+2. compact-layout (extends item-dividers; no upstream PR yet)
+3. [fix-capture-stream-disconnect-leak](https://github.com/tsowell/wiremix/pull/69)
+4. [metering-skip-state-persistence](https://github.com/tsowell/wiremix/pull/64)
+5. [lenient-config](https://github.com/tsowell/wiremix/pull/73)
+6. [fkey-tab-shortcuts](https://github.com/tsowell/wiremix/pull/67)
+7. [pgup-pgdown-navigation](https://github.com/tsowell/wiremix/pull/65)
+8. [max-concurrent-captures](https://github.com/tsowell/wiremix/pull/66) /
+   [max-concurrent-captures-global](https://github.com/tsowell/wiremix/pull/70)
+9. [hide-items-instance](https://github.com/tsowell/wiremix/pull/71) /
+   [hide-items-permanent](https://github.com/tsowell/wiremix/pull/72)
+10. [theme-row-selected-text](https://github.com/tsowell/wiremix/pull/63)
+11. dark-theme (a maintained branch in `HoneyHazard/wiremix`; no upstream
+    PR — it's a personal theme, not a proposed default)
+12. [multichannel-pairing](https://github.com/HoneyHazard/wiremix/tree/multichannel-pairing)
+    — merged last, as it's both the largest change and the one most likely
+    to keep evolving. A draft pull request against `tsowell/wiremix` is
+    planned; until then this links directly to the branch.
+
+---
+
 # wiremix
 
 wiremix is a simple TUI audio mixer for PipeWire. You can use it to adjust
