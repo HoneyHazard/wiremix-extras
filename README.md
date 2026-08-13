@@ -44,7 +44,13 @@ experience here is very welcome.
   addressing one channel at a time, and configurable per-view layout. This
   is by far the largest change here — see its own section below.
 
-<!-- TODO: screenshots (default theme, dark theme) -->
+| Default theme | Built-in dark theme (`-t redshift -s redshift_compact`) |
+| --- | --- |
+| ![Default theme](./assets/screenshot-default-theme.png) | ![Dark theme](./assets/screenshot-dark-theme.png) |
+
+Both show item dividers and split (radiating) volume/meter display for
+detected stereo pairs; the dark theme screenshot also shows the selected
+row's distinct text/background styling.
 
 ## Merge sequence
 
