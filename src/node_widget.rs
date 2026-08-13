@@ -348,9 +348,22 @@ impl<'a> NodeWidget<'a> {
         mouse_areas: &mut Vec<MouseArea>,
         groups: &[ChannelGroup],
     ) {
+        // Only ask ratatui for as many rows as can actually fit. Every row
+        // here (header or channel) is always exactly 1 line tall, so
+        // clamping the constraint count to `area.height` guarantees
+        // `Layout::split` has exactly enough space for each constraint it's
+        // given. Handing it more `Length(1)` constraints than fit lets its
+        // solver spread the shortfall across *all* of them instead of just
+        // the trailing ones - e.g. a 6-channel block squeezed into 2 rows
+        // short would drop channels 1 and 5, not 5 and 6, leaving a
+        // channel row rendered with no header above it and gaps in the
+        // middle of the block instead of a clean cut at the bottom.
+        let visible_groups =
+            area.height.saturating_sub(1).min(groups.len() as u16) as usize;
+
         let mut constraints = vec![Constraint::Length(1)]; // header_row
         constraints.extend(
-            std::iter::repeat(Constraint::Length(1)).take(groups.len()),
+            std::iter::repeat(Constraint::Length(1)).take(visible_groups),
         );
         let row_areas = Layout::default()
             .direction(Direction::Vertical)
@@ -416,7 +429,7 @@ impl<'a> NodeWidget<'a> {
         // consistent with there.
         let radiating_context = !self.channel_state.channel_mode
             && self.channel_state.split_style == SplitStyle::Radiating;
-        let bar_width = radiating_context.then(|| {
+        let bar_width = (radiating_context && visible_groups > 0).then(|| {
             let content_width = Self::split_row_content_width(
                 self.config,
                 self.channel_state.view(),
@@ -425,10 +438,11 @@ impl<'a> NodeWidget<'a> {
             RadiatingRowWidget::bar_width(content_width)
         });
 
-        for (row_index, group) in groups.iter().enumerate() {
+        for (row_index, group) in groups.iter().take(visible_groups).enumerate()
+        {
             let split = row_layout(row_areas[row_index + 1]);
             if header_marked {
-                let is_last = row_index == groups.len() - 1;
+                let is_last = row_index == visible_groups - 1;
                 let selector_char = if is_last {
                     &self.config.char_set.selector_bottom
                 } else {
@@ -2212,6 +2226,37 @@ mod tests {
             pair_label_style: config.pair_label_style,
         };
         let height = NodeWidget::node_height(channel_state, node);
+        render_node_lines_with_height(
+            config,
+            node,
+            channel_mode,
+            selected,
+            selected_channel,
+            height,
+        )
+    }
+
+    /// Like `render_node_lines`, but renders into an explicitly-sized area
+    /// instead of `NodeWidget::node_height` - lets a test simulate the
+    /// object list's own "partial node at the bottom of the viewport"
+    /// mechanism (see `object_list.rs`'s `Constraint::Max(partial_height)`),
+    /// where a `Stacked` block gets less height than it needs to show every
+    /// row.
+    fn render_node_lines_with_height(
+        config: &Config,
+        node: &view::Node,
+        channel_mode: bool,
+        selected: bool,
+        selected_channel: Option<usize>,
+        height: u16,
+    ) -> Vec<String> {
+        let channel_state = ChannelState {
+            channel_mode,
+            channel_display: config.channel_display,
+            unified_imbalance: config.unified_imbalance,
+            split_style: config.split_style,
+            pair_label_style: config.pair_label_style,
+        };
         let area = Rect::new(0, 0, 40, height);
         let mut buf = Buffer::empty(area);
         NodeWidget::new(
@@ -2988,6 +3033,49 @@ mod tests {
                                     // simplifies to "L"/"R" rather than "FL"/"FR".
         assert!(lines[1].contains("L  100%"));
         assert!(lines[2].contains("R    0%"));
+    }
+
+    #[test]
+    fn stacked_block_short_on_space_renders_a_clean_top_cut_not_gaps() {
+        // Reproduces a real bug: the object list's own "partial node at the
+        // bottom of the viewport" mechanism (object_list.rs) can hand a
+        // `Stacked` block an area shorter than its full `node_height`.
+        // `render_channel_rows` used to build one `Constraint::Length(1)`
+        // per row (header + every channel) regardless of how much space
+        // was actually available - when ratatui's `Layout::split` can't
+        // satisfy every constraint, it spreads the shortfall across *all*
+        // of them rather than dropping only the trailing ones, so a
+        // 6-channel block squeezed 2 rows short rendered header, then
+        // channels 2/3/4/6 - channels 1 and 5 silently vanished, leaving a
+        // channel row with no header above it and a gap in the middle of
+        // the block instead of a clean cut at the bottom.
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let rl = libspa_sys::SPA_AUDIO_CHANNEL_RL;
+        let rr = libspa_sys::SPA_AUDIO_CHANNEL_RR;
+        let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        let lfe = libspa_sys::SPA_AUDIO_CHANNEL_LFE;
+        let node = test_node(Some(vec![fl, fr, rl, rr, fc, lfe]), vec![0.5; 6]);
+        let config = config::Config::from_toml_str("");
+
+        // Full height would be 7 (header + 6 channels); give it 5 - 2 short,
+        // matching the live repro.
+        let lines =
+            render_node_lines_with_height(&config, &node, true, false, None, 5);
+
+        assert_eq!(lines.len(), 5);
+        assert!(
+            lines[0].contains("Test node"),
+            "header must still be the first line: {:?}",
+            lines
+        );
+        // The first 4 whole rows that fit (header + first 4 channels: FL,
+        // FR, RL, RR) must be shown, contiguously, in order - not a subset
+        // with gaps punched in the middle.
+        assert!(lines[1].contains("FL"), "line 1 should be FL: {:?}", lines);
+        assert!(lines[2].contains("FR"), "line 2 should be FR: {:?}", lines);
+        assert!(lines[3].contains("RL"), "line 3 should be RL: {:?}", lines);
+        assert!(lines[4].contains("RR"), "line 4 should be RR: {:?}", lines);
     }
 
     #[test]
