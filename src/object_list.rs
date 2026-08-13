@@ -895,7 +895,7 @@ mod tests {
         // Select first object, and let update() compute page_size (3) from
         // the 3-item-tall rect above.
         object_list.down(&view);
-        object_list.update(rect, &view);
+        object_list.update(rect, &view, false, false);
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
 
         object_list.page_down(&view);
@@ -921,18 +921,18 @@ mod tests {
             ObjectList::new(ListKind::Node(NodeKind::All), None);
 
         object_list.down(&view);
-        object_list.update(rect, &view);
+        object_list.update(rect, &view, false, false);
 
         // Page down well past the last of the 10 mock nodes.
         for _ in 0..10 {
             object_list.page_down(&view);
-            object_list.update(rect, &view);
+            object_list.update(rect, &view, false, false);
         }
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(10)));
 
         for _ in 0..10 {
             object_list.page_up(&view);
-            object_list.update(rect, &view);
+            object_list.update(rect, &view, false, false);
         }
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
     }
@@ -954,9 +954,9 @@ mod tests {
 
         // Start in the middle of the 10 mock nodes.
         object_list.down(&view);
-        object_list.update(rect, &view);
+        object_list.update(rect, &view, false, false);
         object_list.page_down(&view);
-        object_list.update(rect, &view);
+        object_list.update(rect, &view, false, false);
 
         object_list.last(&view);
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(10)));
