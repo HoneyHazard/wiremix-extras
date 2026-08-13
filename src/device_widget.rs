@@ -95,29 +95,52 @@ impl StatefulWidget for DeviceWidget<'_> {
         let node_area = layout[1];
 
         if self.selected {
-            let rows = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1),
-                    Constraint::Length(1),
-                    Constraint::Length(1),
-                ])
-                .split(selected_area);
-
             let style = self.config.theme.selector;
 
-            Line::from(Span::styled(&self.config.char_set.selector_top, style))
+            // In compact_layout the item is only 2 rows tall, so there's no
+            // middle row to put selector_middle in - just top and bottom.
+            if self.config.compact_layout {
+                let rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(1), Constraint::Length(1)])
+                    .split(selected_area);
+
+                Line::from(Span::styled(
+                    &self.config.char_set.selector_top,
+                    style,
+                ))
                 .render(rows[0], buf);
-            Line::from(Span::styled(
-                &self.config.char_set.selector_middle,
-                style,
-            ))
-            .render(rows[1], buf);
-            Line::from(Span::styled(
-                &self.config.char_set.selector_bottom,
-                style,
-            ))
-            .render(rows[2], buf);
+                Line::from(Span::styled(
+                    &self.config.char_set.selector_bottom,
+                    style,
+                ))
+                .render(rows[1], buf);
+            } else {
+                let rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                    ])
+                    .split(selected_area);
+
+                Line::from(Span::styled(
+                    &self.config.char_set.selector_top,
+                    style,
+                ))
+                .render(rows[0], buf);
+                Line::from(Span::styled(
+                    &self.config.char_set.selector_middle,
+                    style,
+                ))
+                .render(rows[1], buf);
+                Line::from(Span::styled(
+                    &self.config.char_set.selector_bottom,
+                    style,
+                ))
+                .render(rows[2], buf);
+            }
         }
 
         let layout = Layout::default()
@@ -126,7 +149,7 @@ impl StatefulWidget for DeviceWidget<'_> {
                 Constraint::Length(1), // title_area
                 Constraint::Length(1), // target_area
             ])
-            .spacing(1)
+            .spacing(if self.config.compact_layout { 0 } else { 1 })
             .flex(Flex::Legacy)
             .split(node_area);
         let title_area = layout[0];

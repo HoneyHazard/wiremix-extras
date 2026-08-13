@@ -37,6 +37,7 @@ pub struct Config {
     pub char_set: CharSet,
     pub theme: Theme,
     pub show_dividers: bool,
+    pub compact_layout: bool,
     pub max_volume_percent: f32,
     pub enforce_max_volume: bool,
     pub keybindings: HashMap<KeyEvent, Action>,
@@ -67,6 +68,8 @@ struct ConfigFile {
     theme: String,
     #[serde(default = "default_show_dividers")]
     show_dividers: bool,
+    #[serde(default = "default_compact_layout")]
+    compact_layout: bool,
     #[serde(default = "default_max_volume_percent")]
     max_volume_percent: Option<f32>,
     #[serde(default = "default_enforce_max_volume")]
@@ -279,6 +282,10 @@ fn default_show_dividers() -> bool {
     false
 }
 
+fn default_compact_layout() -> bool {
+    false
+}
+
 impl ConfigFile {
     /// Override configuration with command-line arguments.
     pub fn apply_opt(&mut self, opt: &Opt) {
@@ -345,6 +352,14 @@ impl ConfigFile {
         if opt.show_dividers {
             self.show_dividers = true;
         }
+
+        if opt.no_compact_layout {
+            self.compact_layout = false;
+        }
+
+        if opt.compact_layout {
+            self.compact_layout = true;
+        }
     }
 }
 
@@ -408,6 +423,7 @@ impl TryFrom<ConfigFile> for Config {
             char_set,
             theme,
             show_dividers: config_file.show_dividers,
+            compact_layout: config_file.compact_layout,
             keybindings: config_file.keybindings,
             help,
             names: config_file.names,
@@ -488,6 +504,7 @@ pub mod strict {
         char_set: String,
         theme: String,
         show_dividers: bool,
+        compact_layout: bool,
         max_volume_percent: Option<f32>,
         enforce_max_volume: bool,
         #[serde(deserialize_with = "keybindings")]
@@ -513,6 +530,7 @@ pub mod strict {
                 char_set: strict.char_set,
                 theme: strict.theme,
                 show_dividers: strict.show_dividers,
+                compact_layout: strict.compact_layout,
                 max_volume_percent: strict.max_volume_percent,
                 enforce_max_volume: strict.enforce_max_volume,
                 keybindings: strict.keybindings,
