@@ -572,13 +572,6 @@ list_more = "•••"
 # Volume bar
 volume_empty = "╌"
 volume_filled = "━"
-# volume_filled/volume_empty can be set to any two characters you like. For
-# example, pulsemixer draws its volume bars with filled/empty rectangles and
-# no explicit spacing character between repeated ones - the glyphs' own
-# built-in inset already reads as a gap on all 4 sides in most monospace
-# fonts:
-# volume_filled = "▮"
-# volume_empty  = "▯"
 # Peak meter. Inactive = unlit, active = lit, overload = greater than 0.0 dB
 # Mono meters use only the right side characters
 meter_left_inactive = "▮"
