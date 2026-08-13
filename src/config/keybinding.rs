@@ -17,6 +17,15 @@ impl Keybinding {
         HashMap::from([
             (event(KeyCode::Char('q')), Action::Exit),
             (event(KeyCode::Char('m')), Action::ToggleMute),
+            // `t` for "toggle hide": toggles hiding the selected item for
+            // this instance only. Ctrl+t is the same "toggle hide" mnemonic,
+            // but permanently (saved to disk and synced to other running
+            // instances).
+            (event(KeyCode::Char('t')), Action::ToggleHiddenInstance),
+            (
+                KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+                Action::ToggleHiddenPermanent,
+            ),
             (event(KeyCode::Char('d')), Action::SetDefault),
             (event(KeyCode::Char('l')), Action::SetRelativeVolume(0.01)),
             (event(KeyCode::Right), Action::SetRelativeVolume(0.01)),

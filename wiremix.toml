@@ -91,6 +91,14 @@ lenient_config = false
 # independently, so whichever is more restrictive applies.
 #max_concurrent_captures_global = 8
 
+# If false, hidden items are excluded from peak monitoring - an additional
+# filter on top of lazy_capture and any other capture limits, not a
+# replacement for them. When monitoring is excluded this way, the peak
+# meter is left blank for that item rather than showing an inactive-looking
+# placeholder. True by default, meaning hidden items follow the same
+# monitoring rules as regular ones.
+capture_hidden = true
+
 
 # Keybindings
 #
@@ -129,6 +137,12 @@ keybindings = [
  { key = { Char = "q" }, action = "Exit" },
  # Toggle mute for the selected item
  { key = { Char = "m" }, action = "ToggleMute" },
+ # "t" for "toggle hide": hide/show the selected item for this instance
+ # only (not saved, not synced to other instances)
+ { key = { Char = "t" }, action = "ToggleHiddenInstance" },
+ # Same "toggle hide" mnemonic, but permanently (saved to disk, synced to
+ # other running instances)
+ { key = { Char = "t" }, modifiers = "CONTROL", action = "ToggleHiddenPermanent" },
  # Make the selected item in Input/Output Devices the default endpoint
  { key = { Char = "d" }, action = "SetDefault" },
  # Increase the volume of the selected item by 1%
@@ -402,6 +416,15 @@ meter_center_active = { fg = "LightGreen" }
 config_device = { }
 # The name of the selected profile in the Configuration tab
 config_profile = { }
+# Patched onto a hidden row's own text styles (node_title, node_target,
+# volume, config_device, config_profile) - only whichever of
+# fg/bg/add_modifier you set here override the base style. Used for both
+# instance-hidden and permanently-hidden rows alike (they're
+# distinguished from each other by the hidden_instance/hidden_permanent
+# char_set prefixes instead). A faint tint (e.g. DarkGray) is a typical
+# choice, to visually distinguish hidden items from normal ones without
+# hiding them entirely.
+row_hidden = { fg = "DarkGray" }
 # Dropdown marker next to the profiles in the Configuration tab
 dropdown_icon = { }
 # Border around dropdowns
@@ -450,6 +473,14 @@ help_more = { fg = "DarkGray" }
 default_device = "◇"
 # Marks the default endpoint on the Playback/Recording tabs
 default_stream = "◇"
+# Prefix prepended to a hidden item's title. Unconstrained width (unlike
+# most glyphs above), since it's meant to be a short text tag rather than
+# a single character - e.g. try "🙈 " for an emoji alternative.
+hidden_instance = "[hide] "
+# Same as hidden_instance, but for items permanently hidden (saved to
+# disk, synced to other running instances) rather than just for this
+# instance - e.g. try "🚫 " for an emoji alternative.
+hidden_permanent = "[HIDE] "
 # The selection indicator in a tab
 selector_top = "░"
 selector_middle = "▒"
@@ -522,6 +553,7 @@ meter_center_inactive = { add_modifier = "DIM" }
 meter_center_active = { add_modifier = "BOLD" }
 config_device = { }
 config_profile = { }
+row_hidden = { add_modifier = "DIM" }
 dropdown_icon = { }
 dropdown_border = { }
 dropdown_item = { }
@@ -552,6 +584,7 @@ meter_center_inactive = { }
 meter_center_active = { }
 config_device = { }
 config_profile = { }
+row_hidden = { }
 dropdown_icon = { }
 dropdown_border = { }
 dropdown_item = { }
@@ -564,6 +597,8 @@ help_more = { }
 [char_sets.compat]
 default_device = "◊"
 default_stream = "◊"
+hidden_instance = "[hide] "
+hidden_permanent = "[HIDE] "
 selector_top = "░"
 selector_middle = "▒"
 selector_bottom = "░"
@@ -593,6 +628,8 @@ help_border = "Plain"
 [char_sets.extracompat]
 default_device = "*"
 default_stream = "*"
+hidden_instance = "[hide] "
+hidden_permanent = "[HIDE] "
 selector_top = "-"
 selector_middle = "="
 selector_bottom = "-"

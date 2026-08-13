@@ -48,6 +48,7 @@ pub struct Config {
     pub lazy_capture: bool,
     pub max_concurrent_captures: Option<usize>,
     pub max_concurrent_captures_global: Option<usize>,
+    pub capture_hidden: bool,
     pub filters: Vec<MatchCondition>,
 }
 
@@ -99,6 +100,8 @@ struct ConfigFile {
     lazy_capture: bool,
     max_concurrent_captures: Option<usize>,
     max_concurrent_captures_global: Option<usize>,
+    #[serde(default = "default_capture_hidden")]
+    capture_hidden: bool,
     #[serde(default = "Filter::defaults", deserialize_with = "Filter::merge")]
     filters: Vec<Filter>,
 }
@@ -154,6 +157,8 @@ pub struct NameOverride {
 pub struct CharSet {
     pub default_device: String,
     pub default_stream: String,
+    pub hidden_instance: String,
+    pub hidden_permanent: String,
     pub selector_top: String,
     pub selector_middle: String,
     pub selector_bottom: String,
@@ -204,6 +209,7 @@ pub struct Theme {
     pub meter_center_active: Style,
     pub config_device: Style,
     pub config_profile: Style,
+    pub row_hidden: Style,
     pub dropdown_icon: Style,
     pub dropdown_border: Style,
     pub dropdown_item: Style,
@@ -290,6 +296,10 @@ fn default_show_dividers() -> bool {
 
 fn default_compact_layout() -> bool {
     false
+}
+
+fn default_capture_hidden() -> bool {
+    true
 }
 
 impl ConfigFile {
@@ -384,6 +394,14 @@ impl ConfigFile {
         {
             self.max_concurrent_captures_global =
                 Some(*max_concurrent_captures_global);
+        }
+
+        if opt.no_capture_hidden {
+            self.capture_hidden = false;
+        }
+
+        if opt.capture_hidden {
+            self.capture_hidden = true;
         }
     }
 
@@ -498,6 +516,7 @@ impl TryFrom<ConfigFile> for Config {
             max_concurrent_captures: config_file.max_concurrent_captures,
             max_concurrent_captures_global: config_file
                 .max_concurrent_captures_global,
+            capture_hidden: config_file.capture_hidden,
             filters,
         })
     }
@@ -585,6 +604,7 @@ pub mod strict {
         lazy_capture: bool,
         max_concurrent_captures: Option<usize>,
         max_concurrent_captures_global: Option<usize>,
+        capture_hidden: bool,
         filters: Vec<Filter>,
     }
 
@@ -612,6 +632,7 @@ pub mod strict {
                 max_concurrent_captures: strict.max_concurrent_captures,
                 max_concurrent_captures_global: strict
                     .max_concurrent_captures_global,
+                capture_hidden: strict.capture_hidden,
                 filters: strict.filters,
             }
         }

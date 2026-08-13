@@ -120,6 +120,16 @@ pub struct Opt {
     #[clap(long, value_name = "COUNT")]
     pub max_concurrent_captures_global: Option<usize>,
 
+    /// Exclude hidden items from peak monitoring (on top of, not instead of,
+    /// lazy-capture/other capture limits)
+    #[clap(long, conflicts_with = "capture_hidden")]
+    pub no_capture_hidden: bool,
+
+    /// Apply the same peak monitoring rules to hidden items as regular ones
+    /// (the default)
+    #[clap(long, conflicts_with = "no_capture_hidden")]
+    pub capture_hidden: bool,
+
     #[cfg(debug_assertions)]
     #[clap(short, long)]
     pub dump_events: bool,

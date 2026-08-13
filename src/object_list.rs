@@ -141,6 +141,31 @@ impl ObjectList {
         }
     }
 
+    /// Releases the selection from `object_id`, which has just been
+    /// hidden, moving it to whatever comes right after it in `view`'s
+    /// current order (still the pre-hide order - the hidden item hasn't
+    /// sunk to the bottom yet, since that resorting only happens on the
+    /// next `View::from()` rebuild). Falls back to whatever comes right
+    /// before it if it was the last item, or to no selection at all if
+    /// it was the only item. Doesn't touch dropdown state, unlike
+    /// `down()`/`up()` - this is a reaction to hiding the selected item,
+    /// not a navigation keypress, so a dropdown being open isn't
+    /// relevant here.
+    pub fn release_hidden_selection(
+        &mut self,
+        view: &view::View,
+        object_id: ObjectId,
+    ) {
+        let candidate = view
+            .next_id(self.list_kind, Some(object_id))
+            .filter(|&id| id != object_id)
+            .or_else(|| {
+                view.previous_id(self.list_kind, Some(object_id))
+                    .filter(|&id| id != object_id)
+            });
+        self.select(candidate);
+    }
+
     fn dropdown_open(&mut self, view: &view::View) {
         let targets = match self.list_kind {
             ListKind::Node(_) => self
@@ -420,6 +445,8 @@ pub struct ObjectListWidget<'a, 'b> {
     pub object_list: &'a mut ObjectList,
     pub view: &'a view::View<'b>,
     pub config: &'a Config,
+    pub hidden_instance: &'a HashSet<ObjectId>,
+    pub hidden_permanent: &'a HashSet<ObjectId>,
 }
 
 struct ObjectListRenderContext<'a> {
@@ -496,11 +523,17 @@ impl ObjectListWidget<'_, '_> {
                 .selected
                 .map(|id| id == object.object_id)
                 .unwrap_or_default();
+            let hidden_instance =
+                self.hidden_instance.contains(&object.object_id);
+            let hidden_permanent =
+                self.hidden_permanent.contains(&object.object_id);
             NodeWidget::new(
                 self.config,
                 self.object_list.device_kind,
                 object,
                 selected,
+                hidden_instance,
+                hidden_permanent,
             )
             .render(object_area, buf, mouse_areas);
 
@@ -564,11 +597,18 @@ impl ObjectListWidget<'_, '_> {
                 .selected
                 .map(|id| id == object.object_id)
                 .unwrap_or_default();
-            DeviceWidget::new(object, selected, self.config).render(
-                object_area,
-                buf,
-                mouse_areas,
-            );
+            let hidden_instance =
+                self.hidden_instance.contains(&object.object_id);
+            let hidden_permanent =
+                self.hidden_permanent.contains(&object.object_id);
+            DeviceWidget::new(
+                object,
+                selected,
+                hidden_instance,
+                hidden_permanent,
+                self.config,
+            )
+            .render(object_area, buf, mouse_areas);
 
             if i < last_index {
                 render_divider(
@@ -827,6 +867,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -853,6 +895,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -966,6 +1010,72 @@ mod tests {
     }
 
     #[test]
+    fn hidden_instance_objects_sink_to_bottom() {
+        let (state, wirehose) = init();
+        let mut hidden = HashSet::new();
+        // Hide two objects out of order - the sunk objects should still
+        // come out in their original relative (object_serial) order at
+        // the bottom, not the order they were inserted into the set.
+        hidden.insert(ObjectId::from_raw_id(5));
+        hidden.insert(ObjectId::from_raw_id(2));
+
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &hidden,
+            &HashSet::new(),
+        );
+
+        let ids: Vec<ObjectId> = view
+            .full_nodes(NodeKind::All)
+            .iter()
+            .map(|node| node.object_id)
+            .collect();
+
+        let expected: Vec<ObjectId> = [1, 3, 4, 6, 7, 8, 9, 10, 2, 5]
+            .into_iter()
+            .map(ObjectId::from_raw_id)
+            .collect();
+        assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn hidden_permanent_objects_rank_below_hidden_instance() {
+        let (state, wirehose) = init();
+        let mut hidden_instance = HashSet::new();
+        hidden_instance.insert(ObjectId::from_raw_id(5));
+        let mut hidden_permanent = HashSet::new();
+        // Permanent-hidden even though it comes first by object_serial -
+        // should still rank below the instance-hidden object.
+        hidden_permanent.insert(ObjectId::from_raw_id(1));
+
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &hidden_instance,
+            &hidden_permanent,
+        );
+
+        let ids: Vec<ObjectId> = view
+            .full_nodes(NodeKind::All)
+            .iter()
+            .map(|node| node.object_id)
+            .collect();
+
+        let expected: Vec<ObjectId> = [2, 3, 4, 6, 7, 8, 9, 10, 5, 1]
+            .into_iter()
+            .map(ObjectId::from_raw_id)
+            .collect();
+        assert_eq!(ids, expected);
+    }
+
+    }
+
+    #[test]
     fn visible_objects_changes_with_scroll() {
         let (state, wirehose) = init();
         let view = View::from(
@@ -973,6 +1083,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1084,6 +1196,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1143,6 +1257,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1195,6 +1311,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1264,6 +1382,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1356,6 +1476,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1400,6 +1522,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         assert!(view.default_sink.is_some());
@@ -1445,6 +1569,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         assert!(view.default_source.is_some());

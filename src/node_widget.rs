@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 use ratatui::{
     layout::Flex,
     prelude::{Alignment, Buffer, Constraint, Direction, Layout, Rect},
+    style::Style,
     text::{Line, Span},
     widgets::{StatefulWidget, Widget},
 };
@@ -32,6 +33,8 @@ pub struct NodeWidget<'a> {
     device_kind: Option<DeviceKind>,
     node: &'a view::Node,
     selected: bool,
+    hidden_instance: bool,
+    hidden_permanent: bool,
 }
 
 impl<'a> NodeWidget<'a> {
@@ -40,12 +43,16 @@ impl<'a> NodeWidget<'a> {
         device_kind: Option<DeviceKind>,
         node: &'a view::Node,
         selected: bool,
+        hidden_instance: bool,
+        hidden_permanent: bool,
     ) -> Self {
         Self {
             config,
             device_kind,
             node,
             selected,
+            hidden_instance,
+            hidden_permanent,
         }
     }
 
@@ -161,14 +168,21 @@ impl StatefulWidget for NodeWidget<'_> {
         let header_area = layout[0];
         let bar_area = layout[1];
 
-        HeaderWidget::new(self.config, self.device_kind, self.node).render(
-            header_area,
-            buf,
-            mouse_areas,
-        );
+        HeaderWidget::new(
+            self.config,
+            self.device_kind,
+            self.node,
+            self.hidden_instance,
+            self.hidden_permanent,
+        )
+        .render(header_area, buf, mouse_areas);
 
         // Render volume bar and (if enabled) peak meter
-        let volume = VolumeWidget::new(self.config, self.node);
+        let volume = VolumeWidget::new(
+            self.config,
+            self.node,
+            self.hidden_instance || self.hidden_permanent,
+        );
         if self.config.peaks == Peaks::Off {
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
@@ -199,7 +213,17 @@ impl StatefulWidget for NodeWidget<'_> {
             let meter_area = layout[3];
 
             volume.render(volume_area, buf, mouse_areas);
-            MeterWidget::new(self.config, self.node).render(meter_area, buf);
+            // Peak monitoring is suspended for this item (capture_hidden is
+            // off and it's hidden) - the meter would otherwise still show an
+            // inactive-looking placeholder even though nothing is actually
+            // being sampled, which reads as broken rather than intentionally
+            // off. Leave meter_area untouched instead.
+            let hidden = self.hidden_instance || self.hidden_permanent;
+            let monitoring_suspended = hidden && !self.config.capture_hidden;
+            if !monitoring_suspended {
+                MeterWidget::new(self.config, self.node)
+                    .render(meter_area, buf);
+            }
         }
     }
 }
@@ -263,6 +287,8 @@ struct HeaderWidget<'a> {
     config: &'a Config,
     device_kind: Option<DeviceKind>,
     node: &'a view::Node,
+    hidden_instance: bool,
+    hidden_permanent: bool,
 }
 
 impl<'a> HeaderWidget<'a> {
@@ -270,34 +296,50 @@ impl<'a> HeaderWidget<'a> {
         config: &'a Config,
         device_kind: Option<DeviceKind>,
         node: &'a view::Node,
+        hidden_instance: bool,
+        hidden_permanent: bool,
     ) -> Self {
         Self {
             config,
             device_kind,
             node,
+            hidden_instance,
+            hidden_permanent,
+        }
+    }
+
+    fn hidden(&self) -> bool {
+        self.hidden_instance || self.hidden_permanent
+    }
+
+    /// Patches `row_hidden` onto `base` when this row is hidden - a no-op
+    /// (`row_hidden` defaults to an empty `Style`) unless a theme
+    /// explicitly sets it.
+    fn hidden_style(&self, base: Style) -> Style {
+        if self.hidden() {
+            base.patch(self.config.theme.row_hidden)
+        } else {
+            base
         }
     }
 
     fn target_line(&self) -> Line<'_> {
+        let target_style = self.hidden_style(self.config.theme.node_target);
         match self.node.target {
             Some(view::Target::Default) => {
                 // Add the default target indicator
                 Line::from(vec![
                     Span::styled(
                         &self.config.char_set.default_stream,
-                        self.config.theme.default_stream,
+                        self.hidden_style(self.config.theme.default_stream),
                     ),
                     Span::from(" "),
-                    Span::styled(
-                        &self.node.target_title,
-                        self.config.theme.node_target,
-                    ),
+                    Span::styled(&self.node.target_title, target_style),
                 ])
             }
-            _ => Line::from(Span::styled(
-                &self.node.target_title,
-                self.config.theme.node_target,
-            )),
+            _ => {
+                Line::from(Span::styled(&self.node.target_title, target_style))
+            }
         }
     }
 
@@ -305,15 +347,24 @@ impl<'a> HeaderWidget<'a> {
         let default_span = if is_default(self.node, self.device_kind) {
             Span::styled(
                 &self.config.char_set.default_device,
-                self.config.theme.default_device,
+                self.hidden_style(self.config.theme.default_device),
             )
         } else {
             Span::from(" ")
         };
+        let title_style = self.hidden_style(self.config.theme.node_title);
+        let hidden_prefix = if self.hidden_permanent {
+            Span::styled(&self.config.char_set.hidden_permanent, title_style)
+        } else if self.hidden_instance {
+            Span::styled(&self.config.char_set.hidden_instance, title_style)
+        } else {
+            Span::from("")
+        };
         Line::from(vec![
             default_span,
             Span::from(" "),
-            Span::styled(&self.node.title, self.config.theme.node_title),
+            hidden_prefix,
+            Span::styled(&self.node.title, title_style),
         ])
     }
 }
@@ -385,11 +436,16 @@ impl StatefulWidget for HeaderWidget<'_> {
 struct VolumeWidget<'a> {
     config: &'a Config,
     node: &'a view::Node,
+    hidden: bool,
 }
 
 impl<'a> VolumeWidget<'a> {
-    fn new(config: &'a Config, node: &'a view::Node) -> Self {
-        Self { config, node }
+    fn new(config: &'a Config, node: &'a view::Node, hidden: bool) -> Self {
+        Self {
+            config,
+            node,
+            hidden,
+        }
     }
 }
 
@@ -418,12 +474,14 @@ impl StatefulWidget for VolumeWidget<'_> {
             let volume = mean.cbrt();
             let percent = (volume * 100.0).round() as u32;
 
-            Line::from(Span::styled(
-                format!("{percent}%"),
-                self.config.theme.volume,
-            ))
-            .alignment(Alignment::Right)
-            .render(volume_label, buf);
+            let volume_style = if self.hidden {
+                self.config.theme.volume.patch(self.config.theme.row_hidden)
+            } else {
+                self.config.theme.volume
+            };
+            Line::from(Span::styled(format!("{percent}%"), volume_style))
+                .alignment(Alignment::Right)
+                .render(volume_label, buf);
 
             let count = ((volume.clamp(0.0, max_volume) / max_volume)
                 * volume_bar.width as f32)
@@ -531,5 +589,71 @@ impl Widget for MeterWidget<'_> {
         }
 
         self.node.peaks_dirty.store(false, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config;
+    use crate::wirehose::ObjectId;
+    use std::sync::atomic::AtomicBool;
+
+    fn test_node() -> view::Node {
+        view::Node {
+            object_id: ObjectId::from_raw_id(1),
+            object_serial: 1,
+            name: String::from("Test node"),
+            title: String::from("Test node"),
+            media_class: String::from("Stream/Output/Audio"),
+            routes: None,
+            target_title: String::new(),
+            target: None,
+            volumes: vec![1.0],
+            mute: false,
+            peaks: None,
+            peaks_dirty: std::sync::Arc::new(AtomicBool::new(false)),
+            positions: None,
+            device_info: None,
+            is_default_sink: false,
+            is_default_source: false,
+            client_id: None,
+        }
+    }
+
+    fn non_blank_cells(config: &Config, node: &view::Node) -> usize {
+        let area = Rect::new(0, 0, 20, 3);
+        let mut buf = Buffer::empty(area);
+        // hidden_instance is true in both compared renders below, so the
+        // "[hide] " title prefix is present either way - only
+        // capture_hidden differs, isolating the meter's own contribution.
+        NodeWidget::new(config, None, node, false, true, false).render(
+            area,
+            &mut buf,
+            &mut Vec::new(),
+        );
+        buf.content
+            .iter()
+            .filter(|cell| cell.symbol() != " ")
+            .count()
+    }
+
+    #[test]
+    fn meter_hidden_when_monitoring_suspended() {
+        let node = test_node();
+
+        let capture_hidden_true =
+            config::Config::from_toml_str("peaks = \"mono\"");
+        let capture_hidden_false = config::Config::from_toml_str(
+            "peaks = \"mono\"\ncapture_hidden = false",
+        );
+
+        // Same hidden item either way (title prefix unchanged) - fewer
+        // non-blank cells with capture_hidden off confirms the meter
+        // placeholder was skipped entirely, not just drawn over blank
+        // space.
+        let shown = non_blank_cells(&capture_hidden_true, &node);
+        let suspended = non_blank_cells(&capture_hidden_false, &node);
+        assert!(suspended < shown);
     }
 }
