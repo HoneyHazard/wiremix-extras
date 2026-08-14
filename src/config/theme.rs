@@ -170,12 +170,17 @@ impl Default for Theme {
             volume: Style::default(),
             volume_empty: Style::default().fg(Color::DarkGray),
             volume_filled: Style::default().fg(Color::LightBlue),
-            meter_inactive: Style::default().fg(Color::DarkGray),
-            // Defaults to the exact same style as meter_inactive, so this
-            // zone's preview is invisible until you actually customize it
-            // (e.g. to a dim red) - see meter_inactive_overload's own docs
-            // in wiremix.toml.
-            meter_inactive_overload: Style::default().fg(Color::DarkGray),
+            // A dim shade of the same hue meter_active/meter_overload use
+            // in their own zone, rather than a flat DarkGray - previews
+            // which zone each not-yet-lit position belongs to (green vs.
+            // red) the way a physical VU meter's unlit red zone still
+            // reads as "red," just dark, even with the needle elsewhere.
+            meter_inactive: Style::default()
+                .fg(Color::LightGreen)
+                .add_modifier(Modifier::DIM),
+            meter_inactive_overload: Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::DIM),
             meter_active: Style::default().fg(Color::LightGreen),
             meter_overload: Style::default().fg(Color::Red),
             meter_center_inactive: Style::default().fg(Color::DarkGray),

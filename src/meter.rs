@@ -16,13 +16,13 @@ use crate::config::{ChannelView, Config};
 /// of where the overload zone sits on the scale, the way a physical VU
 /// meter marks its red zone whether or not the needle is currently there.
 /// This split always happens - there's no separate on/off switch for it.
-/// What makes it visually inert by default is that `meter_left/right_
-/// inactive_overload` (char_set) and `meter_inactive_overload` (theme)
-/// default to the exact same glyph/color as their plain `inactive`
-/// counterparts, so classic wiremix's single flat unlit color is what you
-/// get until you actually write a different value for one of those keys
-/// into your own config - at which point exactly that zone's preview
-/// changes, and nothing else does.
+/// `meter_left/right_inactive_overload` (char_set) and
+/// `meter_inactive_overload` (theme) are ordinary fields like any other
+/// `meter_*` key, resolved the same way `meter_active`/`meter_overload`
+/// already are - the "default" char_set/theme ship a real (dim red/hollow)
+/// preview out of the box, but nothing stops a config from setting either
+/// one back to match plain `inactive` if the flat classic look is
+/// preferred instead.
 struct PeakSizes {
     active: usize,
     overload: usize,

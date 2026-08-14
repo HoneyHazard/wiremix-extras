@@ -580,18 +580,18 @@ volume = { }
 # Volume bar
 volume_empty = { fg = "DarkGray" }
 volume_filled = { fg = "LightBlue" }
-# Peak meter. Inactive = unlit, active = lit, overload = greater than 0.0 dB
-meter_inactive = { fg = "DarkGray" }
+# Peak meter. Inactive = unlit, active = lit, overload = greater than 0.0 dB.
+# Inactive uses a dim shade of the same hue as active, rather than a flat
+# gray - previews which zone a not-yet-lit position belongs to, the way a
+# physical VU meter's unlit red zone still reads as "red," just dark.
+meter_inactive = { fg = "LightGreen", add_modifier = "DIM" }
 meter_active = { fg = "LightGreen" }
 meter_overload = { fg = "Red" }
 # The portion of an unlit meter that's past the same 0.0 dB boundary
 # meter_overload marks when lit - a permanent preview of where the
 # overload zone sits on the scale, the way a physical VU meter marks its
-# red zone whether or not the needle is currently there. Defaults to the
-# exact same style as meter_inactive, so this is invisible until you set
-# it to something else yourself - try fg = "Red", add_modifier = "DIM"
-# for a dim preview of the red zone.
-meter_inactive_overload = { fg = "DarkGray" }
+# red zone whether or not the needle is currently there.
+meter_inactive_overload = { fg = "Red", add_modifier = "DIM" }
 # The "live" indicator in the center of the meter
 meter_center_inactive = { fg = "DarkGray" }
 meter_center_active = { fg = "LightGreen" }
@@ -710,24 +710,22 @@ divider = "─"
 volume_empty = "╌"
 volume_filled = "━"
 # Peak meter. Inactive = unlit, active = lit, overload = greater than 0.0 dB
-# Mono meters use only the right side characters
-meter_left_inactive = "▮"
+# Mono meters use only the right side characters. Inactive positions use a
+# hollow rectangle (same cell width/placement as the filled one active/
+# overload use) rather than reusing the filled glyph - pulsemixer draws
+# its volume bars with filled/hollow rectangles the same way.
+meter_left_inactive = "▯"
 meter_left_active = "▮"
 meter_left_overload = "▮"
-meter_right_inactive = "▮"
+meter_right_inactive = "▯"
 meter_right_active = "▮"
 meter_right_overload = "▮"
 # The glyph for the portion of an unlit meter past the overload boundary -
-# see meter_inactive_overload above. Defaults to the same glyph as
-# meter_left/right_inactive (no shape change - meter_inactive_overload's
-# color alone does the work by default), but a distinct glyph works too.
-# For example, pulsemixer draws its volume bars with filled/hollow
-# rectangles - the same look works well here to mark "not lit, but this is
-# the overload zone" vs meter_*_active's filled "▮":
-# meter_left_inactive_overload = "▯"
-# meter_right_inactive_overload = "▯"
-meter_left_inactive_overload = "▮"
-meter_right_inactive_overload = "▮"
+# see meter_inactive_overload above. Defaults to the same hollow glyph as
+# meter_left/right_inactive - meter_inactive_overload's dim red is what
+# marks it as the overload zone specifically, not a different shape.
+meter_left_inactive_overload = "▯"
+meter_right_inactive_overload = "▯"
 # The "live" indicator in the center of the meter
 # Mono meters use only the right side
 meter_center_left_inactive = "▮"
