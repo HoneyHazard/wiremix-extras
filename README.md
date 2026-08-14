@@ -35,22 +35,41 @@ experience here is very welcome.
 - **Selected-row text theming** — `row_selected`/`row_unselected` theme
   keys for customizing how the current row's text (not just its
   background) is highlighted.
+- **Peak meter zone preview** — an optional `meter_inactive_overload`
+  color (and matching `compat` glyph) that previews where the overload
+  boundary sits on a meter's unlit portion, before the signal actually
+  reaches it.
 - **A built-in dark theme** (`-t redshift -s redshift_compact`) — ready to
   try with no configuration file needed.
 - **Multichannel and channel-pairing support** — per-channel volume
-  control, an optional split display for a node's individual channels
-  (radiating from a shared center marker for a detected stereo pair, or
-  stacked one row per channel/group), a dedicated Channel mode for
-  addressing one channel at a time, and configurable per-view layout. This
-  is by far the largest change here — see its own section below.
+  control, three views cycled with `Space` (collapsed / linked / per-
+  channel), two ways to flag an imbalanced node without leaving the
+  collapsed view (`unified_imbalance = "cycle"` or `"split"`), radiating
+  or stacked split layout, and configurable per-view sizing. This is by
+  far the largest change here — see its own section below, and the
+  [multichannel-pairing PR](https://github.com/tsowell/wiremix/pull/76)
+  for a longer gallery covering each of these individually.
 
 | Default theme | Built-in dark theme (`-t redshift -s redshift_compact`) |
 | --- | --- |
 | ![Default theme](./assets/screenshot-default-theme.png) | ![Dark theme](./assets/screenshot-dark-theme.png) |
 
-Both show item dividers and split (radiating) volume/meter display for
-detected stereo pairs; the dark theme screenshot also shows the selected
-row's distinct text/background styling.
+Both show several features at once on real hardware with live peak
+activity: item dividers, `linked` view's split/radiating volume+meter
+display (a 5.1 device splits into its detected pairs plus unpaired
+channels; plain stereo devices radiate from a center marker), a selected
+row's distinct text/background styling, a muted node, and a genuinely
+imbalanced stream (`SW_VOCALS_PRE`, L≠R) shown split rather than
+averaged into one misleading number.
+
+| `default` char_set | `compat` char_set |
+| --- | --- |
+| ![default char_set](./assets/screenshot-charset-default.png) | ![compat char_set](./assets/screenshot-charset-compat.png) |
+
+Same devices, same `linked` view - `default`'s blockier filled-rectangle
+meter (`▮`) vs `compat`'s thin, seamless vertical bar (`┃`). Pick whichever
+reads better in your own terminal/font; `extracompat` (not pictured) goes
+a step further and stays plain-ASCII throughout.
 
 ## Merge sequence
 
