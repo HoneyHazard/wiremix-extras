@@ -589,20 +589,21 @@ meter_center_right_active = "▮"
 # Peak meter glyphs used instead of the meter_*/meter_center_* glyphs above
 # whenever the active view is "linked" or "channels" rather than "unified"
 # (see view_cycle) - lets a split/per-channel meter look visually distinct
-# from a whole node's own "unified" meter. Unset falls back to the
-# meter_*/meter_center_* glyph above, so a char_set that hasn't opted in to
-# a distinct look for linked/channels view renders identically to
-# "unified". Mono meters use only the right/center_right side.
-meter_split_left_inactive = "❘"
-meter_split_left_active = "❘"
-meter_split_left_overload = "❘"
-meter_split_right_inactive = "❘"
-meter_split_right_active = "❘"
-meter_split_right_overload = "❘"
-meter_split_center_left_inactive = "▇"
-meter_split_center_left_active = "▇"
-meter_split_center_right_inactive = "▇"
-meter_split_center_right_active = "▇"
+# from a whole node's own "unified" meter. Unset (the default) falls back
+# to the meter_*/meter_center_* glyph above, so linked/channels view
+# renders with exactly the same meter glyphs as "unified" - only the
+# volume bars actually splitting (and the per-channel label) indicate the
+# view has changed. Mono meters use only the right/center_right side.
+#meter_split_left_inactive = "❘"
+#meter_split_left_active = "❘"
+#meter_split_left_overload = "❘"
+#meter_split_right_inactive = "❘"
+#meter_split_right_active = "❘"
+#meter_split_right_overload = "❘"
+#meter_split_center_left_inactive = "▇"
+#meter_split_center_left_active = "▇"
+#meter_split_center_right_inactive = "▇"
+#meter_split_center_right_active = "▇"
 # Dropdown marker next to the profiles in the Configuration tab
 dropdown_icon = "▼"
 # Indicates the selected item in a dropdown
@@ -714,16 +715,16 @@ meter_center_left_inactive = "█"
 meter_center_left_active = "█"
 meter_center_right_inactive = "█"
 meter_center_right_active = "█"
-meter_split_left_inactive = "❘"
-meter_split_left_active = "❘"
-meter_split_left_overload = "❘"
-meter_split_right_inactive = "❘"
-meter_split_right_active = "❘"
-meter_split_right_overload = "❘"
-meter_split_center_left_inactive = "▇"
-meter_split_center_left_active = "▇"
-meter_split_center_right_inactive = "▇"
-meter_split_center_right_active = "▇"
+#meter_split_left_inactive = "❘"
+#meter_split_left_active = "❘"
+#meter_split_left_overload = "❘"
+#meter_split_right_inactive = "❘"
+#meter_split_right_active = "❘"
+#meter_split_right_overload = "❘"
+#meter_split_center_left_inactive = "▇"
+#meter_split_center_left_active = "▇"
+#meter_split_center_right_inactive = "▇"
+#meter_split_center_right_active = "▇"
 dropdown_icon = "▼"
 dropdown_selector = ">"
 dropdown_more = "•••"
