@@ -425,6 +425,12 @@ impl<'a> NodeWidget<'a> {
         // needs for `hidden_style`, while `HeaderWidget` above still gets
         // the two separately since it needs to pick which icon to show.
         let hidden = self.hidden_instance || self.hidden_permanent;
+        // See `NodeWidget::render`'s own identical `monitoring_suspended` -
+        // a hidden node's per-row split meters need the same suppression
+        // its classic single-row meter already gets, or they'd keep
+        // showing a stale/inactive-looking gauge for a stream that isn't
+        // actually being captured.
+        let monitoring_suspended = hidden && !self.config.capture_hidden;
 
         let mut constraints = vec![Constraint::Length(1)]; // header_row
         constraints.extend(
@@ -546,6 +552,7 @@ impl<'a> NodeWidget<'a> {
                             self.channel_state.view(),
                             hidden,
                             self.selected,
+                            monitoring_suspended,
                         )
                         .render(
                             split[1],
@@ -560,6 +567,7 @@ impl<'a> NodeWidget<'a> {
                             self.channel_state.view(),
                             hidden,
                             self.selected,
+                            monitoring_suspended,
                         )
                         .render(
                             split[1],
@@ -582,6 +590,7 @@ impl<'a> NodeWidget<'a> {
                         self.channel_state.view(),
                         hidden,
                         self.selected,
+                        monitoring_suspended,
                     )
                     .render(split[1], buf, mouse_areas);
                 }
@@ -1578,9 +1587,15 @@ struct ChannelRowWidget<'a> {
     view: ChannelView,
     hidden: bool,
     selected: bool,
+    /// See `NodeWidget::render`'s own identical `monitoring_suspended` -
+    /// this row's own peak meter needs the same "don't draw a stale/
+    /// inactive-looking gauge for a stream that isn't actually being
+    /// captured" suppression the classic single-row meter already gets.
+    monitoring_suspended: bool,
 }
 
 impl<'a> ChannelRowWidget<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         config: &'a Config,
         node: &'a view::Node,
@@ -1588,6 +1603,7 @@ impl<'a> ChannelRowWidget<'a> {
         view: ChannelView,
         hidden: bool,
         selected: bool,
+        monitoring_suspended: bool,
     ) -> Self {
         Self {
             config,
@@ -1596,6 +1612,7 @@ impl<'a> ChannelRowWidget<'a> {
             view,
             hidden,
             selected,
+            monitoring_suspended,
         }
     }
 
@@ -1758,14 +1775,22 @@ impl StatefulWidget for ChannelRowWidget<'_> {
         }
 
         if let Some(meter_area) = meter_area {
-            let peak = self
-                .node
-                .peaks
-                .as_deref()
-                .and_then(|peaks| peaks.get(channel_index))
-                .map(|peak| peak.load());
-            meter::render_mono(meter_area, buf, peak, self.config, self.view);
-            self.node.peaks_dirty.store(false, Ordering::Relaxed);
+            if !self.monitoring_suspended {
+                let peak = self
+                    .node
+                    .peaks
+                    .as_deref()
+                    .and_then(|peaks| peaks.get(channel_index))
+                    .map(|peak| peak.load());
+                meter::render_mono(
+                    meter_area,
+                    buf,
+                    peak,
+                    self.config,
+                    self.view,
+                );
+                self.node.peaks_dirty.store(false, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -1896,6 +1921,8 @@ struct RadiatingRowWidget<'a> {
     view: ChannelView,
     hidden: bool,
     selected: bool,
+    /// See `ChannelRowWidget`'s own identical field.
+    monitoring_suspended: bool,
 }
 
 impl<'a> RadiatingRowWidget<'a> {
@@ -1910,6 +1937,7 @@ impl<'a> RadiatingRowWidget<'a> {
         view: ChannelView,
         hidden: bool,
         selected: bool,
+        monitoring_suspended: bool,
     ) -> Self {
         Self {
             config,
@@ -1921,6 +1949,7 @@ impl<'a> RadiatingRowWidget<'a> {
             view,
             hidden,
             selected,
+            monitoring_suspended,
         }
     }
 
@@ -2112,7 +2141,9 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
                 ));
             }
             if let Some(meter_area) = meter_area {
-                self.render_meter(meter_area, buf);
+                if !self.monitoring_suspended {
+                    self.render_meter(meter_area, buf);
+                }
             }
             return;
         };
@@ -2203,7 +2234,9 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         }
 
         if let Some(meter_area) = meter_area {
-            self.render_meter(meter_area, buf);
+            if !self.monitoring_suspended {
+                self.render_meter(meter_area, buf);
+            }
         }
     }
 }
@@ -2485,6 +2518,28 @@ mod tests {
         // non-blank cells with capture_hidden off confirms the meter
         // placeholder was skipped entirely, not just drawn over blank
         // space.
+        let shown = non_blank_cells(&capture_hidden_true, &node);
+        let suspended = non_blank_cells(&capture_hidden_false, &node);
+        assert!(suspended < shown);
+    }
+
+    #[test]
+    fn split_row_meter_hidden_when_monitoring_suspended() {
+        // Same suppression `meter_hidden_when_monitoring_suspended` checks
+        // for the classic single-row meter, but forced into the Stacked
+        // display path (`ChannelRowWidget`) - a genuine cross-branch gap,
+        // since neither `hide-items` nor `multichannel-pairing` alone has
+        // both a `capture_hidden` concept and a split-row meter to apply
+        // it to.
+        let node = test_node(None, vec![1.0]);
+
+        let capture_hidden_true = config::Config::from_toml_str(
+            "peaks = \"mono\"\nchannel_display = \"always\"\nsplit_style = \"stacked\"",
+        );
+        let capture_hidden_false = config::Config::from_toml_str(
+            "peaks = \"mono\"\nchannel_display = \"always\"\nsplit_style = \"stacked\"\ncapture_hidden = false",
+        );
+
         let shown = non_blank_cells(&capture_hidden_true, &node);
         let suspended = non_blank_cells(&capture_hidden_false, &node);
         assert!(suspended < shown);
