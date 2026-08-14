@@ -15,6 +15,10 @@ experience here is very welcome.
 
 *`Space` cycling through `unified`/`linked`/`channels` view, `unified_imbalance = "cycle"` alternating a genuinely imbalanced stream's L/R values while still collapsed, and per-channel cursor movement in `channels` view - all on real hardware with live peak activity.*
 
+<img src="https://raw.githubusercontent.com/HoneyHazard/wiremix/assets/readme/demo-redshift.gif" width="500">
+
+*The same walkthrough (`unified` → `linked` → `channels`) in the built-in `redshift` theme.*
+
 ## What's included
 
 - **Item dividers** — an optional line drawn between list items, for
