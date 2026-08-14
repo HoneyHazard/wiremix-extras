@@ -694,6 +694,14 @@ help_border = { }
 help_item = { }
 help_more = { }
 
+# Unlike [char_sets.default]'s meter_split_* (left commented out above -
+# its filled-block glyph already renders as individually-inset rectangles,
+# so linked/channels view doesn't need a separate glyph), this char_set's
+# unified-view meter is a solid, seamlessly-connected line ("┃"/"█" render
+# with no gap between repeated cells). meter_split_* here is therefore
+# set to a lighter-weight glyph in the same thin-bar/block family that
+# renders with a natural vertical gap between repeated cells, so a split
+# view stays visually distinct from unified without changing shape.
 [char_sets.compat]
 default_device = "◊"
 default_stream = "◊"
@@ -715,16 +723,16 @@ meter_center_left_inactive = "█"
 meter_center_left_active = "█"
 meter_center_right_inactive = "█"
 meter_center_right_active = "█"
-#meter_split_left_inactive = "❘"
-#meter_split_left_active = "❘"
-#meter_split_left_overload = "❘"
-#meter_split_right_inactive = "❘"
-#meter_split_right_active = "❘"
-#meter_split_right_overload = "❘"
-#meter_split_center_left_inactive = "▇"
-#meter_split_center_left_active = "▇"
-#meter_split_center_right_inactive = "▇"
-#meter_split_center_right_active = "▇"
+meter_split_left_inactive = "❘"
+meter_split_left_active = "❘"
+meter_split_left_overload = "❘"
+meter_split_right_inactive = "❘"
+meter_split_right_active = "❘"
+meter_split_right_overload = "❘"
+meter_split_center_left_inactive = "▇"
+meter_split_center_left_active = "▇"
+meter_split_center_right_inactive = "▇"
+meter_split_center_right_active = "▇"
 dropdown_icon = "▼"
 dropdown_selector = ">"
 dropdown_more = "•••"
@@ -733,10 +741,10 @@ help_more = "•••"
 help_border = "Plain"
 
 [char_sets.extracompat]
-# Explicit inherit (unlike default/compat above) so the commented-out
-# meter_split_* lines below correctly reflect this char_set's own None
-# default, rather than falling back to [char_sets.default]'s Some("❘")/
-# Some("▇").
+# Explicit inherit (unlike default/compat above) so an unset meter_split_*
+# field here always falls back to this char_set's own None default,
+# rather than silently picking up [char_sets.default]'s value (whatever
+# it happens to be) the way an unspecified `inherit` normally would.
 inherit = "extracompat"
 default_device = "*"
 default_stream = "*"
