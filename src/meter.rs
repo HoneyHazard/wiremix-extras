@@ -259,9 +259,10 @@ fn render_mono_core(
 /// counterpart wherever a theme hasn't set it - so a theme that hasn't
 /// opted in to a distinct split-view look renders identically to
 /// `Unified`. The `inactive_overload` zone-preview glyph/color (see
-/// [`PeakSizes`]) is shared across every view - there's no
-/// `meter_split_inactive_overload` counterpart, since the boundary it
-/// marks doesn't change with the view.
+/// [`PeakSizes`]) is an ordinary zone like active/inactive/overload, not
+/// a special case - `meter_split_left/right_inactive_overload` (glyph)
+/// and `meter_split_inactive_overload` (color) follow the same
+/// split/fallback rule as everything else here.
 pub fn render_stereo(
     meter_area: Rect,
     buf: &mut Buffer,
@@ -282,7 +283,9 @@ pub fn render_stereo(
             overload: theme
                 .meter_split_overload
                 .unwrap_or(theme.meter_overload),
-            inactive_overload: theme.meter_inactive_overload,
+            inactive_overload: theme
+                .meter_split_inactive_overload
+                .unwrap_or(theme.meter_inactive_overload),
         }
     } else {
         MeterStyle {
@@ -307,7 +310,10 @@ pub fn render_stereo(
                 .meter_split_left_overload
                 .as_deref()
                 .unwrap_or(&cs.meter_left_overload),
-            inactive_overload: &cs.meter_left_inactive_overload,
+            inactive_overload: cs
+                .meter_split_left_inactive_overload
+                .as_deref()
+                .unwrap_or(&cs.meter_left_inactive_overload),
         }
     } else {
         MeterChars {
@@ -332,7 +338,10 @@ pub fn render_stereo(
                 .meter_split_right_overload
                 .as_deref()
                 .unwrap_or(&cs.meter_right_overload),
-            inactive_overload: &cs.meter_right_inactive_overload,
+            inactive_overload: cs
+                .meter_split_right_inactive_overload
+                .as_deref()
+                .unwrap_or(&cs.meter_right_inactive_overload),
         }
     } else {
         MeterChars {
@@ -424,7 +433,10 @@ pub fn render_mono(
                     .meter_split_right_overload
                     .as_deref()
                     .unwrap_or(&cs.meter_right_overload),
-                inactive_overload: &cs.meter_right_inactive_overload,
+                inactive_overload: cs
+                    .meter_split_right_inactive_overload
+                    .as_deref()
+                    .unwrap_or(&cs.meter_right_inactive_overload),
             },
             style: MeterStyle {
                 inactive: theme
@@ -434,7 +446,9 @@ pub fn render_mono(
                 overload: theme
                     .meter_split_overload
                     .unwrap_or(theme.meter_overload),
-                inactive_overload: theme.meter_inactive_overload,
+                inactive_overload: theme
+                    .meter_split_inactive_overload
+                    .unwrap_or(theme.meter_inactive_overload),
             },
         }
     } else {

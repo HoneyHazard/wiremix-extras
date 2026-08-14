@@ -601,6 +601,7 @@ meter_center_active = { fg = "LightGreen" }
 # meter_center_* color above, so a theme that hasn't opted in to a distinct
 # look for linked/channels view renders identically to "unified".
 # meter_split_inactive = { fg = "DarkGray" }
+# meter_split_inactive_overload = { fg = "Red", add_modifier = "DIM" }
 # meter_split_active = { fg = "LightGreen" }
 # meter_split_overload = { fg = "Red" }
 # meter_split_center_inactive = { fg = "DarkGray" }
@@ -740,10 +741,16 @@ meter_center_right_active = "▮"
 # renders with exactly the same meter glyphs as "unified" - only the
 # volume bars actually splitting (and the per-channel label) indicate the
 # view has changed. Mono meters use only the right/center_right side.
+# meter_split_left/right_inactive_overload is the split-view counterpart
+# of meter_left/right_inactive_overload above - the permanent overload-
+# zone preview marker is an ordinary zone like any other here, not a
+# special case exempt from meter_split_*.
 #meter_split_left_inactive = "❘"
+#meter_split_left_inactive_overload = "❘"
 #meter_split_left_active = "❘"
 #meter_split_left_overload = "❘"
 #meter_split_right_inactive = "❘"
+#meter_split_right_inactive_overload = "❘"
 #meter_split_right_active = "❘"
 #meter_split_right_overload = "❘"
 #meter_split_center_left_inactive = "▇"
@@ -793,6 +800,7 @@ meter_inactive_overload = { add_modifier = "DIM" }
 meter_center_inactive = { add_modifier = "DIM" }
 meter_center_active = { add_modifier = "BOLD" }
 # meter_split_inactive = { add_modifier = "DIM" }
+# meter_split_inactive_overload = { add_modifier = "DIM" }
 # meter_split_active = { add_modifier = "BOLD" }
 # meter_split_overload = { add_modifier = "BOLD" }
 # meter_split_center_inactive = { add_modifier = "DIM" }
@@ -832,6 +840,7 @@ meter_inactive_overload = { }
 meter_center_inactive = { }
 meter_center_active = { }
 # meter_split_inactive = { }
+# meter_split_inactive_overload = { }
 # meter_split_active = { }
 # meter_split_overload = { }
 # meter_split_center_inactive = { }
@@ -891,9 +900,11 @@ meter_center_left_active = "█"
 meter_center_right_inactive = "█"
 meter_center_right_active = "█"
 meter_split_left_inactive = "❘"
+meter_split_left_inactive_overload = "❘"
 meter_split_left_active = "❘"
 meter_split_left_overload = "❘"
 meter_split_right_inactive = "❘"
+meter_split_right_inactive_overload = "❘"
 meter_split_right_active = "❘"
 meter_split_right_overload = "❘"
 meter_split_center_left_inactive = "▇"
@@ -942,9 +953,11 @@ meter_center_right_active = "]"
 # default/compat above - it keeps falling back to the classic meter_*/
 # meter_center_* glyphs above in every view.
 # meter_split_left_inactive = "="
+# meter_split_left_inactive_overload = "="
 # meter_split_left_active = "#"
 # meter_split_left_overload = "!"
 # meter_split_right_inactive = "="
+# meter_split_right_inactive_overload = "="
 # meter_split_right_active = "#"
 # meter_split_right_overload = "!"
 # meter_split_center_left_inactive = "["

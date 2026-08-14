@@ -29,6 +29,7 @@ pub struct ThemeOverlay {
     meter_center_inactive: Option<StyleDef>,
     meter_center_active: Option<StyleDef>,
     meter_split_inactive: Option<StyleDef>,
+    meter_split_inactive_overload: Option<StyleDef>,
     meter_split_active: Option<StyleDef>,
     meter_split_overload: Option<StyleDef>,
     meter_split_center_inactive: Option<StyleDef>,
@@ -132,6 +133,7 @@ impl TryFrom<ThemeOverlay> for Theme {
         set!(meter_center_inactive);
         set!(meter_center_active);
         set_optional!(meter_split_inactive);
+        set_optional!(meter_split_inactive_overload);
         set_optional!(meter_split_active);
         set_optional!(meter_split_overload);
         set_optional!(meter_split_center_inactive);
@@ -186,6 +188,7 @@ impl Default for Theme {
             meter_center_inactive: Style::default().fg(Color::DarkGray),
             meter_center_active: Style::default().fg(Color::LightGreen),
             meter_split_inactive: None,
+            meter_split_inactive_overload: None,
             meter_split_active: None,
             meter_split_overload: None,
             meter_split_center_inactive: None,
@@ -242,6 +245,7 @@ impl Theme {
             meter_center_inactive: Style::default().add_modifier(Modifier::DIM),
             meter_center_active: Style::default().add_modifier(Modifier::BOLD),
             meter_split_inactive: None,
+            meter_split_inactive_overload: None,
             meter_split_active: None,
             meter_split_overload: None,
             meter_split_center_inactive: None,
@@ -285,6 +289,7 @@ impl Theme {
             meter_center_inactive: Style::default(),
             meter_center_active: Style::default(),
             meter_split_inactive: None,
+            meter_split_inactive_overload: None,
             meter_split_active: None,
             meter_split_overload: None,
             meter_split_center_inactive: None,
@@ -429,6 +434,7 @@ mod tests {
     fn meter_split_colors_are_unset_by_default_and_configurable() {
         for builtin in Theme::defaults().values() {
             assert_eq!(builtin.meter_split_inactive, None);
+            assert_eq!(builtin.meter_split_inactive_overload, None);
             assert_eq!(builtin.meter_split_active, None);
             assert_eq!(builtin.meter_split_overload, None);
             assert_eq!(builtin.meter_split_center_inactive, None);

@@ -2524,11 +2524,21 @@ mod tests {
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
         };
-        let height = NodeWidget::node_height(channel_state, node);
+        let height = NodeWidget::node_height(channel_state, node, false);
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
-        NodeWidget::new(config, None, node, false, channel_state, None, 0.0)
-            .render(area, &mut buf, &mut Vec::new());
+        NodeWidget::new(
+            config,
+            None,
+            node,
+            false,
+            false,
+            false,
+            channel_state,
+            None,
+            0.0,
+        )
+        .render(area, &mut buf, &mut Vec::new());
 
         (0..height)
             .map(|y| {

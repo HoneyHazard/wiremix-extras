@@ -455,9 +455,11 @@ pub struct CharSet {
     /// monitor gauge looks identical to `Unified`'s until a theme opts
     /// in to something distinct. `Unified` view never consults these.
     pub meter_split_left_inactive: Option<String>,
+    pub meter_split_left_inactive_overload: Option<String>,
     pub meter_split_left_active: Option<String>,
     pub meter_split_left_overload: Option<String>,
     pub meter_split_right_inactive: Option<String>,
+    pub meter_split_right_inactive_overload: Option<String>,
     pub meter_split_right_active: Option<String>,
     pub meter_split_right_overload: Option<String>,
     pub meter_split_center_left_inactive: Option<String>,
@@ -499,6 +501,7 @@ pub struct Theme {
     /// back to the stock meter_* field above" idea as `CharSet`'s
     /// `meter_split_*` glyph overrides.
     pub meter_split_inactive: Option<Style>,
+    pub meter_split_inactive_overload: Option<Style>,
     pub meter_split_active: Option<Style>,
     pub meter_split_overload: Option<Style>,
     pub meter_split_center_inactive: Option<Style>,

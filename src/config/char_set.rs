@@ -38,9 +38,11 @@ pub struct CharSetOverlay {
     meter_center_right_inactive: Option<String>,
     meter_center_right_active: Option<String>,
     meter_split_left_inactive: Option<String>,
+    meter_split_left_inactive_overload: Option<String>,
     meter_split_left_active: Option<String>,
     meter_split_left_overload: Option<String>,
     meter_split_right_inactive: Option<String>,
+    meter_split_right_inactive_overload: Option<String>,
     meter_split_right_active: Option<String>,
     meter_split_right_overload: Option<String>,
     meter_split_center_left_inactive: Option<String>,
@@ -156,9 +158,11 @@ impl TryFrom<CharSetOverlay> for CharSet {
         validate_and_set!(meter_center_right_inactive, 1);
         validate_and_set!(meter_center_right_active, 1);
         validate_and_set_optional!(meter_split_left_inactive, 1);
+        validate_and_set_optional!(meter_split_left_inactive_overload, 1);
         validate_and_set_optional!(meter_split_left_active, 1);
         validate_and_set_optional!(meter_split_left_overload, 1);
         validate_and_set_optional!(meter_split_right_inactive, 1);
+        validate_and_set_optional!(meter_split_right_inactive_overload, 1);
         validate_and_set_optional!(meter_split_right_active, 1);
         validate_and_set_optional!(meter_split_right_overload, 1);
         validate_and_set_optional!(meter_split_center_left_inactive, 1);
@@ -229,9 +233,11 @@ impl Default for CharSet {
             // per-user. See CharSet::compat()'s own meter_split_*
             // comment for the char_set where this distinction matters.
             meter_split_left_inactive: None,
+            meter_split_left_inactive_overload: None,
             meter_split_left_active: None,
             meter_split_left_overload: None,
             meter_split_right_inactive: None,
+            meter_split_right_inactive_overload: None,
             meter_split_right_active: None,
             meter_split_right_overload: None,
             meter_split_center_left_inactive: None,
@@ -295,11 +301,17 @@ impl CharSet {
             // lighter-weight glyph pair in the same thin-bar/block family
             // that renders with a natural vertical gap between repeated
             // cells ("❘"/"▇"), so a split view is still visually distinct
-            // from Unified without introducing an unrelated shape.
+            // from Unified without introducing an unrelated shape. This
+            // includes the permanent overload-zone preview marker at the
+            // meter's outer edge (meter_left/right_inactive_overload) -
+            // it's an ordinary zone like active/inactive/overload, not a
+            // special case, so it gets the same disjoint treatment.
             meter_split_left_inactive: Some(String::from("❘")),
+            meter_split_left_inactive_overload: Some(String::from("❘")),
             meter_split_left_active: Some(String::from("❘")),
             meter_split_left_overload: Some(String::from("❘")),
             meter_split_right_inactive: Some(String::from("❘")),
+            meter_split_right_inactive_overload: Some(String::from("❘")),
             meter_split_right_active: Some(String::from("❘")),
             meter_split_right_overload: Some(String::from("❘")),
             meter_split_center_left_inactive: Some(String::from("▇")),
@@ -343,9 +355,11 @@ impl CharSet {
             meter_center_right_inactive: String::from("]"),
             meter_center_right_active: String::from("]"),
             meter_split_left_inactive: None,
+            meter_split_left_inactive_overload: None,
             meter_split_left_active: None,
             meter_split_left_overload: None,
             meter_split_right_inactive: None,
+            meter_split_right_inactive_overload: None,
             meter_split_right_active: None,
             meter_split_right_overload: None,
             meter_split_center_left_inactive: None,
