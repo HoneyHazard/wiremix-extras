@@ -324,12 +324,19 @@ impl<'a> NodeWidget<'a> {
     /// header line plus one line per `display_rows()` group (a detected
     /// pair rendered as radiating counts as one row, same as any single
     /// channel); everything else renders at the ordinary fixed
-    /// `height()`.
-    pub fn node_height(channel_state: ChannelState, node: &view::Node) -> u16 {
+    /// `height()`. `compact_layout` only shrinks the latter case - a
+    /// `Stacked` block has no blank header/bar gap to begin with, so
+    /// there's nothing for it to remove there.
+    pub fn node_height(
+        channel_state: ChannelState,
+        node: &view::Node,
+        compact_layout: bool,
+    ) -> u16 {
         match volume_display(channel_state, node) {
             VolumeDisplay::Stacked => {
                 1 + display_rows(channel_state, node).len() as u16
             }
+            _ if compact_layout => Self::height().saturating_sub(1),
             _ => Self::height(),
         }
     }
@@ -380,19 +387,6 @@ impl<'a> NodeWidget<'a> {
         mouse_areas: &mut Vec<MouseArea>,
         groups: &[ChannelGroup],
     ) {
-        // Only ask ratatui for as many rows as can actually fit. Every row
-        // here (header or channel) is always exactly 1 line tall, so
-        // clamping the constraint count to `area.height` guarantees
-        // `Layout::split` has exactly enough space for each constraint it's
-        // given. Handing it more `Length(1)` constraints than fit lets its
-        // solver spread the shortfall across *all* of them instead of just
-        // the trailing ones - e.g. a 6-channel block squeezed into 2 rows
-        // short would drop channels 1 and 5, not 5 and 6, leaving a
-        // channel row rendered with no header above it and gaps in the
-        // middle of the block instead of a clean cut at the bottom.
-        let visible_groups =
-            area.height.saturating_sub(1).min(groups.len() as u16) as usize;
-
         // Only ask ratatui for as many rows as can actually fit. Every row
         // here (header or channel) is always exactly 1 line tall, so
         // clamping the constraint count to `area.height` guarantees
@@ -3204,7 +3198,7 @@ mod tests {
     fn node_height_default_is_unaffected_by_channel_count() {
         let node = test_node(None, vec![1.0, 1.0, 1.0]);
         assert_eq!(
-            NodeWidget::node_height(channel_state(false), &node),
+            NodeWidget::node_height(channel_state(false), &node, false),
             NodeWidget::height()
         );
     }
@@ -3213,14 +3207,17 @@ mod tests {
     fn node_height_channel_mode_expands_one_line_per_channel() {
         let node = test_node(None, vec![1.0, 1.0, 1.0]);
         // 1 header line + 3 channel lines
-        assert_eq!(NodeWidget::node_height(channel_state(true), &node), 4);
+        assert_eq!(
+            NodeWidget::node_height(channel_state(true), &node, false),
+            4
+        );
     }
 
     #[test]
     fn node_height_channel_mode_single_channel_unaffected() {
         let node = test_node(None, vec![1.0]);
         assert_eq!(
-            NodeWidget::node_height(channel_state(true), &node),
+            NodeWidget::node_height(channel_state(true), &node, false),
             NodeWidget::height()
         );
     }
@@ -3242,7 +3239,7 @@ mod tests {
         state.split_style = SplitStyle::Radiating;
 
         // 1 header line + 4 group rows
-        assert_eq!(NodeWidget::node_height(state, &node), 5);
+        assert_eq!(NodeWidget::node_height(state, &node, false), 5);
     }
 
     #[test]
@@ -3400,7 +3397,10 @@ mod tests {
         let lines = render_node_lines(&config, &node, false, true, Some(1));
 
         assert_eq!(lines.len(), 3);
-        assert_eq!(NodeWidget::node_height(channel_state(false), &node), 3);
+        assert_eq!(
+            NodeWidget::node_height(channel_state(false), &node, false),
+            3
+        );
     }
 
     #[test]

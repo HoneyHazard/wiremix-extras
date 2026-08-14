@@ -572,16 +572,7 @@ impl ObjectList {
 
         let mut used = 0u16;
         let mut count = 0usize;
-        for height in self.item_heights(view) {
-            // One fewer row per item - the internal gap between an item's
-            // header/bar rows - when compact_layout is on; see the
-            // matching -1 in ObjectListWidget::render() and NodeWidget/
-            // DeviceWidget's own render() methods.
-            let height = if compact_layout {
-                height.saturating_sub(1)
-            } else {
-                height
-            };
+        for height in self.item_heights(view, compact_layout) {
             let step = height.saturating_add(spacing);
             if used.saturating_add(step) > list_area.height {
                 break;
@@ -596,19 +587,33 @@ impl ObjectList {
     /// onward, in list order. Node heights vary with the current channel
     /// display/setting state and each node's own channel count/values
     /// (see `NodeWidget::node_height`); device heights are always
-    /// uniform.
-    fn item_heights(&self, view: &view::View) -> Vec<u16> {
+    /// uniform. `compact_layout` shrinks a device row (always the
+    /// classic 2-line style) unconditionally, but only shrinks a node row
+    /// when `NodeWidget::node_height` says it applies - see its own doc
+    /// comment for why a `Stacked` block is exempt.
+    fn item_heights(
+        &self,
+        view: &view::View,
+        compact_layout: bool,
+    ) -> Vec<u16> {
         let channel_state = self.channel_state();
         match self.list_kind {
             ListKind::Node(node_kind) => view
                 .full_nodes(node_kind)
                 .iter()
                 .skip(self.top)
-                .map(|node| NodeWidget::node_height(channel_state, node))
+                .map(|node| {
+                    NodeWidget::node_height(channel_state, node, compact_layout)
+                })
                 .collect(),
             ListKind::Device => {
                 let count = view.full_devices().len().saturating_sub(self.top);
-                vec![DeviceWidget::height(); count]
+                let height = if compact_layout {
+                    DeviceWidget::height().saturating_sub(1)
+                } else {
+                    DeviceWidget::height()
+                };
+                vec![height; count]
             }
         }
     }
@@ -1079,19 +1084,12 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
         // channel mode is taller than one that isn't) - walked from `top`
         // to find how many whole objects fit, mirroring
         // `ObjectList::visible_count`'s own walk.
-        let item_heights = self.object_list.item_heights(self.view);
+        let item_heights = self
+            .object_list
+            .item_heights(self.view, self.config.compact_layout);
         let mut used = 0u16;
         let mut objects_visible = 0usize;
         for &item_height in &item_heights {
-            // One fewer row per item - the internal gap between an item's
-            // header/bar rows - when compact_layout is on; see the
-            // matching -1 in ObjectList::visible_count() and NodeWidget/
-            // DeviceWidget's own render() methods.
-            let item_height = if self.config.compact_layout {
-                item_height.saturating_sub(1)
-            } else {
-                item_height
-            };
             let step = item_height.saturating_add(spacing);
             if used.saturating_add(step) > list_area.height {
                 break;
