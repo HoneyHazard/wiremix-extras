@@ -11,6 +11,10 @@ available as its own small, independently-reviewable PR against the
 original project. Feedback on either the individual PRs or the combined
 experience here is very welcome.
 
+<img src="https://raw.githubusercontent.com/HoneyHazard/wiremix/assets/readme/demo.gif" width="612">
+
+*`Space` cycling through `unified`/`linked`/`channels` view, `unified_imbalance = "cycle"` alternating a genuinely imbalanced stream's L/R values while still collapsed, and per-channel cursor movement in `channels` view - all on real hardware with live peak activity.*
+
 ## What's included
 
 - **Item dividers** — an optional line drawn between list items, for
