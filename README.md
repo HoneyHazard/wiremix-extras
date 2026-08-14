@@ -1,14 +1,10 @@
 # wiremix-extras
 
 This repository is an experiment: it takes [tsowell/wiremix](https://github.com/tsowell/wiremix)
-and combines a set of independent feature branches from
-[HoneyHazard/wiremix](https://github.com/HoneyHazard/wiremix) — each already
+and combines a set of independent feature branches — most already
 proposed upstream as its own focused pull request — into one build, so the
-combination can be evaluated as a whole rather than one change at a time.
-It exists purely as a convenience for trying things out; it isn't a
-statement that any of this belongs upstream, and every feature here remains
-available as its own small, independently-reviewable PR against the
-original project. Feedback on either the individual PRs or the combined
+combination can be played with as a whole rather than one change at a time.
+Feedback on either the individual PRs or the combined
 experience here is very welcome.
 
 <img src="https://raw.githubusercontent.com/HoneyHazard/wiremix/assets/readme/demo.gif" width="612">
