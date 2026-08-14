@@ -3504,7 +3504,7 @@ mod tests {
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
         };
-        let height = NodeWidget::node_height(channel_state, node);
+        let height = NodeWidget::node_height(channel_state, node, false);
         let area = Rect::new(0, 0, 40, height);
         let mut buf = Buffer::empty(area);
         NodeWidget::new(
@@ -3512,6 +3512,8 @@ mod tests {
             None,
             node,
             selected,
+            false,
+            false,
             channel_state,
             selected_channel,
             0.0,
