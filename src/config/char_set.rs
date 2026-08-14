@@ -220,11 +220,14 @@ impl Default for CharSet {
             meter_center_left_active: String::from("▮"),
             meter_center_right_inactive: String::from("▮"),
             meter_center_right_active: String::from("▮"),
-            // Unset by default - Linked/Channels-view meters use exactly
-            // the same glyphs as Unified view, so the only visual
-            // difference a split view introduces is the volume bars
-            // actually splitting (and the per-channel label), not a
-            // different meter shape. Still overridable per-user.
+            // Unset here - this char_set's Unified-view meter is already
+            // a row of individually-inset filled rectangles ("▮"), so
+            // there's no seamless/disjoint distinction left to draw:
+            // Linked/Channels-view meters use exactly the same glyph,
+            // and the volume-bar split plus per-channel label remain the
+            // only visual cue a view has changed. Still overridable
+            // per-user. See CharSet::compat()'s own meter_split_*
+            // comment for the char_set where this distinction matters.
             meter_split_left_inactive: None,
             meter_split_left_active: None,
             meter_split_left_overload: None,
@@ -285,17 +288,24 @@ impl CharSet {
             meter_center_left_active: String::from("█"),
             meter_center_right_inactive: String::from("█"),
             meter_center_right_active: String::from("█"),
-            // See CharSet::default()'s own meter_split_* comment.
-            meter_split_left_inactive: None,
-            meter_split_left_active: None,
-            meter_split_left_overload: None,
-            meter_split_right_inactive: None,
-            meter_split_right_active: None,
-            meter_split_right_overload: None,
-            meter_split_center_left_inactive: None,
-            meter_split_center_left_active: None,
-            meter_split_center_right_inactive: None,
-            meter_split_center_right_active: None,
+            // Unlike CharSet::default()'s filled-block glyphs, this
+            // char_set's Unified-view meter is a *solid, seamlessly
+            // connected* line (box-drawing "┃"/"█" render with no gap
+            // between repeated cells). Linked/Channels views use a
+            // lighter-weight glyph pair in the same thin-bar/block family
+            // that renders with a natural vertical gap between repeated
+            // cells ("❘"/"▇"), so a split view is still visually distinct
+            // from Unified without introducing an unrelated shape.
+            meter_split_left_inactive: Some(String::from("❘")),
+            meter_split_left_active: Some(String::from("❘")),
+            meter_split_left_overload: Some(String::from("❘")),
+            meter_split_right_inactive: Some(String::from("❘")),
+            meter_split_right_active: Some(String::from("❘")),
+            meter_split_right_overload: Some(String::from("❘")),
+            meter_split_center_left_inactive: Some(String::from("▇")),
+            meter_split_center_left_active: Some(String::from("▇")),
+            meter_split_center_right_inactive: Some(String::from("▇")),
+            meter_split_center_right_active: Some(String::from("▇")),
             dropdown_icon: String::from("▼"),
             dropdown_selector: String::from(">"),
             dropdown_more: String::from("•••"),
