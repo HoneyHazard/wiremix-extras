@@ -1028,7 +1028,7 @@ meter_center_inactive  = { fg = "DarkGray" }
 # dark-red tint behind the same accent yellow + BOLD used for
 # selector/tab_selected above, same "pill" pattern (dark bg + bright
 # fg), just red-toned instead of brown.
-row_selected = { fg = "#FFD34D", bg = "#3A1414", add_modifier = "BOLD" }
+row_selected = { fg = "#FFD34D", bg = "#1D0A0A", add_modifier = "BOLD" }
 
 # Faint background tint on every unselected row's text only, much
 # darker/less saturated than row_selected's bg so it never competes

@@ -349,7 +349,7 @@ impl Theme {
             meter_center_inactive: Style::default().fg(Color::DarkGray),
             row_selected: Style::default()
                 .fg(Color::Rgb(0xFF, 0xD3, 0x4D))
-                .bg(Color::Rgb(0x3A, 0x14, 0x14))
+                .bg(Color::Rgb(0x1D, 0x0A, 0x0A))
                 .add_modifier(Modifier::BOLD),
             row_unselected: Style::default().bg(Color::Rgb(0x1F, 0x0D, 0x0D)),
             dropdown_selected: Style::default()
