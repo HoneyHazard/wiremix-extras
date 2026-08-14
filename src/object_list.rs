@@ -776,6 +776,13 @@ fn render_divider(
 /// check so the marker's height stays exactly what it's always been for
 /// every theme that doesn't opt into `row_selected`.
 ///
+/// `suppress_marker` skips just the marker glyph (the background fill
+/// still bleeds) - used for a Channel-mode node, where the selection is
+/// conceptually localized to one channel row inside the block, not the
+/// block as a whole, so bleeding a whole-node marker into the gap above/
+/// below would draw what looks like a second, unrelated cursor next to
+/// the real (single-row) one.
+///
 /// Both `row_selected_extend_above`/`_below` default to `false`, so this
 /// whole function is a no-op - no size or height change to the marker or
 /// background - unless a config explicitly turns one or both on.
@@ -786,6 +793,7 @@ fn extend_selected_row(
     above_clip: Rect,
     below_clip: Rect,
     spacing: u16,
+    suppress_marker: bool,
 ) {
     let max_extend = spacing.min(1);
 
@@ -799,7 +807,7 @@ fn extend_selected_row(
         let clipped = clip.intersection(extend_area);
         buf.set_style(clipped, config.theme.row_selected);
 
-        if config.theme.row_selected == Style::default() {
+        if config.theme.row_selected == Style::default() || suppress_marker {
             return;
         }
 
@@ -908,6 +916,7 @@ impl ObjectListWidget<'_, '_> {
                     above_clip,
                     below_clip,
                     NodeWidget::spacing(),
+                    self.object_list.channel_state().channel_mode,
                 );
             }
         }
@@ -1005,6 +1014,7 @@ impl ObjectListWidget<'_, '_> {
                     above_clip,
                     below_clip,
                     DeviceWidget::spacing(),
+                    false,
                 );
             }
         }
@@ -2484,6 +2494,7 @@ mod tests {
             list_area,
             list_area,
             NodeWidget::spacing(),
+            false,
         );
         assert_eq!(buf[(0, 0)].style(), blank[(0, 0)].style());
 
@@ -2495,6 +2506,7 @@ mod tests {
             widened,
             list_area,
             NodeWidget::spacing(),
+            false,
         );
         assert_ne!(buf[(0, 0)].style(), blank[(0, 0)].style());
     }
@@ -2523,6 +2535,7 @@ mod tests {
             list_area,
             list_area,
             NodeWidget::spacing(),
+            false,
         );
         assert_eq!(buf[(0, 3)].style(), blank[(0, 3)].style());
 
@@ -2534,7 +2547,54 @@ mod tests {
             list_area,
             widened,
             NodeWidget::spacing(),
+            false,
         );
         assert_ne!(buf[(0, 3)].style(), blank[(0, 3)].style());
+    }
+
+    #[test]
+    fn extend_selected_row_suppresses_marker_in_channel_mode() {
+        // A Channel-mode node's selection is localized to one channel row
+        // inside the block, not the block as a whole - bleeding a whole-
+        // node marker into the gap above/below would draw what looks like
+        // a second, unrelated cursor next to the real single-row one. The
+        // background fill still bleeds (a plain color tint, not a marker
+        // glyph) - only the marker glyph itself is suppressed.
+        let config = config::Config::from_toml_str(
+            "row_selected_extend_above = true\n\
+             [themes.default]\n\
+             row_selected = { bg = \"Blue\" }",
+        );
+        let object_area = Rect::new(0, 1, 20, 3);
+        let list_area = Rect::new(0, 1, 20, 10);
+        let widened = Rect::new(0, 0, 20, 11);
+        let blank = Buffer::empty(Rect::new(0, 0, 20, 11));
+
+        let mut buf = blank.clone();
+        extend_selected_row(
+            &mut buf,
+            &config,
+            object_area,
+            widened,
+            list_area,
+            NodeWidget::spacing(),
+            false,
+        );
+        let marker = config.char_set.selector_middle.as_str();
+        assert_eq!(buf[(0, 0)].symbol(), marker);
+
+        let mut buf = blank.clone();
+        extend_selected_row(
+            &mut buf,
+            &config,
+            object_area,
+            widened,
+            list_area,
+            NodeWidget::spacing(),
+            true,
+        );
+        assert_ne!(buf[(0, 0)].symbol(), marker);
+        // Background fill still bleeds even with the marker suppressed.
+        assert_ne!(buf[(0, 0)].style(), blank[(0, 0)].style());
     }
 }
