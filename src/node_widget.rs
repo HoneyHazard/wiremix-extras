@@ -470,9 +470,26 @@ impl StatefulWidget for VolumeWidget<'_> {
                 .char_set
                 .volume_empty
                 .repeat((volume_bar.width as usize).saturating_sub(count));
+            let (filled_style, blank_style) = if self.hidden {
+                (
+                    self.config
+                        .theme
+                        .volume_filled
+                        .patch(self.config.theme.row_hidden),
+                    self.config
+                        .theme
+                        .volume_empty
+                        .patch(self.config.theme.row_hidden),
+                )
+            } else {
+                (
+                    self.config.theme.volume_filled,
+                    self.config.theme.volume_empty,
+                )
+            };
             Line::from(vec![
-                Span::styled(filled, self.config.theme.volume_filled),
-                Span::styled(blank, self.config.theme.volume_empty),
+                Span::styled(filled, filled_style),
+                Span::styled(blank, blank_style),
             ])
             .render(volume_bar, buf);
         }
