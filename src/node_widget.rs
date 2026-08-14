@@ -51,6 +51,25 @@ pub(crate) fn row_text_style(
     }
 }
 
+/// Patches `row_hidden` onto `style` whenever `hidden` is true - a no-op
+/// (`row_hidden` defaults to an empty `Style`) unless a theme explicitly
+/// sets it. Shared by every per-row widget that renders hideable content
+/// (`HeaderWidget`, `VolumeWidget`, `StereoVolumeWidget`,
+/// `ChannelRowWidget`, `RadiatingRowWidget`) instead of each carrying its
+/// own copy of the same branch - mirrors `row_text_style`'s own role for
+/// `row_unselected`.
+pub(crate) fn row_hidden_style(
+    hidden: bool,
+    style: Style,
+    config: &Config,
+) -> Style {
+    if hidden {
+        style.patch(config.theme.row_hidden)
+    } else {
+        style
+    }
+}
+
 /// Whether `node`'s own channels currently all hold the same value.
 /// `false` for a node with 0 or 1 channels - nothing to be imbalanced
 /// between.
@@ -400,6 +419,13 @@ impl<'a> NodeWidget<'a> {
         let visible_groups =
             area.height.saturating_sub(1).min(groups.len() as u16) as usize;
 
+        // See `NodeWidget::render`'s own identical computation - collapses
+        // the two independent hide reasons into the single bool every
+        // per-row widget below (`ChannelRowWidget`/`RadiatingRowWidget`)
+        // needs for `hidden_style`, while `HeaderWidget` above still gets
+        // the two separately since it needs to pick which icon to show.
+        let hidden = self.hidden_instance || self.hidden_permanent;
+
         let mut constraints = vec![Constraint::Length(1)]; // header_row
         constraints.extend(
             std::iter::repeat(Constraint::Length(1)).take(visible_groups),
@@ -518,6 +544,8 @@ impl<'a> NodeWidget<'a> {
                                  condition bar_width was computed from",
                             ),
                             self.channel_state.view(),
+                            hidden,
+                            self.selected,
                         )
                         .render(
                             split[1],
@@ -530,6 +558,8 @@ impl<'a> NodeWidget<'a> {
                             self.node,
                             channel_index,
                             self.channel_state.view(),
+                            hidden,
+                            self.selected,
                         )
                         .render(
                             split[1],
@@ -550,6 +580,8 @@ impl<'a> NodeWidget<'a> {
                              the condition bar_width was computed from",
                         ),
                         self.channel_state.view(),
+                        hidden,
+                        self.selected,
                     )
                     .render(split[1], buf, mouse_areas);
                 }
@@ -826,15 +858,9 @@ impl<'a> HeaderWidget<'a> {
         self.hidden_instance || self.hidden_permanent
     }
 
-    /// Patches `row_hidden` onto `base` when this row is hidden - a no-op
-    /// (`row_hidden` defaults to an empty `Style`) unless a theme
-    /// explicitly sets it.
+    /// See `row_hidden_style`.
     fn hidden_style(&self, base: Style) -> Style {
-        if self.hidden() {
-            base.patch(self.config.theme.row_hidden)
-        } else {
-            base
-        }
+        row_hidden_style(self.hidden(), base, self.config)
     }
 
     /// See `row_text_style`.
@@ -1046,8 +1072,15 @@ fn render_volume(
             left_index,
             right_index,
         } => {
-            StereoVolumeWidget::new(config, node, left_index, right_index)
-                .render(area, buf, mouse_areas);
+            StereoVolumeWidget::new(
+                config,
+                node,
+                left_index,
+                right_index,
+                ctx.hidden,
+                ctx.selected,
+            )
+            .render(area, buf, mouse_areas);
         }
         VolumeDisplay::Unified | VolumeDisplay::Stacked => {
             VolumeWidget::new(
@@ -1101,13 +1134,9 @@ impl<'a> VolumeWidget<'a> {
         }
     }
 
-    /// See `HeaderWidget::hidden_style`.
+    /// See `row_hidden_style`.
     fn hidden_style(&self, base: Style) -> Style {
-        if self.hidden {
-            base.patch(self.config.theme.row_hidden)
-        } else {
-            base
-        }
+        row_hidden_style(self.hidden, base, self.config)
     }
 
     /// See `row_text_style`.
@@ -1247,8 +1276,14 @@ impl StatefulWidget for VolumeWidget<'_> {
                 .volume_empty
                 .repeat((volume_bar.width as usize).saturating_sub(count));
             Line::from(vec![
-                Span::styled(filled, self.config.theme.volume_filled),
-                Span::styled(blank, self.config.theme.volume_empty),
+                Span::styled(
+                    filled,
+                    self.hidden_style(self.config.theme.volume_filled),
+                ),
+                Span::styled(
+                    blank,
+                    self.hidden_style(self.config.theme.volume_empty),
+                ),
             ])
             .render(volume_bar, buf);
         } else if self.node.mute {
@@ -1316,6 +1351,8 @@ struct StereoVolumeWidget<'a> {
     node: &'a view::Node,
     left_index: usize,
     right_index: usize,
+    hidden: bool,
+    selected: bool,
 }
 
 impl<'a> StereoVolumeWidget<'a> {
@@ -1324,13 +1361,27 @@ impl<'a> StereoVolumeWidget<'a> {
         node: &'a view::Node,
         left_index: usize,
         right_index: usize,
+        hidden: bool,
+        selected: bool,
     ) -> Self {
         Self {
             config,
             node,
             left_index,
             right_index,
+            hidden,
+            selected,
         }
+    }
+
+    /// See `row_hidden_style`.
+    fn hidden_style(&self, base: Style) -> Style {
+        row_hidden_style(self.hidden, base, self.config)
+    }
+
+    /// See `row_text_style`.
+    fn text_style(&self, style: Style) -> Style {
+        row_text_style(self.selected, style, self.config)
     }
 }
 
@@ -1396,7 +1447,9 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
         } else {
             format!("{}%", (left_volume * 100.0).round() as u32)
         };
-        Line::from(Span::styled(left_percent, self.config.theme.volume))
+        let volume_style =
+            self.text_style(self.hidden_style(self.config.theme.volume));
+        Line::from(Span::styled(left_percent, volume_style))
             .alignment(Alignment::Right)
             .render(label_l, buf);
 
@@ -1405,10 +1458,10 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
         } else {
             format!("{}%", (right_volume * 100.0).round() as u32)
         };
-        Line::from(Span::styled(right_percent, self.config.theme.volume))
+        Line::from(Span::styled(right_percent, volume_style))
             .render(label_r, buf);
 
-        Line::from(Span::styled("|", self.config.theme.volume))
+        Line::from(Span::styled("|", volume_style))
             .alignment(Alignment::Center)
             .render(center, buf);
 
@@ -1424,11 +1477,11 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
                     .char_set
                     .volume_empty
                     .repeat((bar_l.width as usize).saturating_sub(left_count)),
-                self.config.theme.volume_empty,
+                self.hidden_style(self.config.theme.volume_empty),
             ),
             Span::styled(
                 self.config.char_set.volume_filled.repeat(left_count),
-                self.config.theme.volume_filled,
+                self.hidden_style(self.config.theme.volume_filled),
             ),
         ])
         .render(bar_l, buf);
@@ -1441,14 +1494,14 @@ impl StatefulWidget for StereoVolumeWidget<'_> {
         Line::from(vec![
             Span::styled(
                 self.config.char_set.volume_filled.repeat(right_count),
-                self.config.theme.volume_filled,
+                self.hidden_style(self.config.theme.volume_filled),
             ),
             Span::styled(
                 self.config
                     .char_set
                     .volume_empty
                     .repeat((bar_r.width as usize).saturating_sub(right_count)),
-                self.config.theme.volume_empty,
+                self.hidden_style(self.config.theme.volume_empty),
             ),
         ])
         .render(bar_r, buf);
@@ -1523,6 +1576,8 @@ struct ChannelRowWidget<'a> {
     node: &'a view::Node,
     channel_index: usize,
     view: ChannelView,
+    hidden: bool,
+    selected: bool,
 }
 
 impl<'a> ChannelRowWidget<'a> {
@@ -1531,13 +1586,27 @@ impl<'a> ChannelRowWidget<'a> {
         node: &'a view::Node,
         channel_index: usize,
         view: ChannelView,
+        hidden: bool,
+        selected: bool,
     ) -> Self {
         Self {
             config,
             node,
             channel_index,
             view,
+            hidden,
+            selected,
         }
+    }
+
+    /// See `row_hidden_style`.
+    fn hidden_style(&self, base: Style) -> Style {
+        row_hidden_style(self.hidden, base, self.config)
+    }
+
+    /// See `row_text_style`.
+    fn text_style(&self, style: Style) -> Style {
+        row_text_style(self.selected, style, self.config)
     }
 }
 
@@ -1610,16 +1679,15 @@ impl StatefulWidget for ChannelRowWidget<'_> {
                 .unwrap_or_else(|| channel_index.to_string()),
         };
 
-        Line::from(Span::styled(&label, self.config.theme.volume))
+        let volume_style =
+            self.text_style(self.hidden_style(self.config.theme.volume));
+        Line::from(Span::styled(&label, volume_style))
             .alignment(Alignment::Right)
             .render(label_col, buf);
 
-        Line::from(Span::styled(
-            format!("{percent}%"),
-            self.config.theme.volume,
-        ))
-        .alignment(Alignment::Right)
-        .render(percent_col, buf);
+        Line::from(Span::styled(format!("{percent}%"), volume_style))
+            .alignment(Alignment::Right)
+            .render(percent_col, buf);
 
         let count = ((volume.clamp(0.0, max_volume) / max_volume)
             * volume_bar.width as f32)
@@ -1631,8 +1699,14 @@ impl StatefulWidget for ChannelRowWidget<'_> {
             .volume_empty
             .repeat((volume_bar.width as usize).saturating_sub(count));
         Line::from(vec![
-            Span::styled(filled, self.config.theme.volume_filled),
-            Span::styled(blank, self.config.theme.volume_empty),
+            Span::styled(
+                filled,
+                self.hidden_style(self.config.theme.volume_filled),
+            ),
+            Span::styled(
+                blank,
+                self.hidden_style(self.config.theme.volume_empty),
+            ),
         ])
         .render(volume_bar, buf);
 
@@ -1820,9 +1894,12 @@ struct RadiatingRowWidget<'a> {
     /// `NodeWidget::render_channel_rows`.
     bar_width: u16,
     view: ChannelView,
+    hidden: bool,
+    selected: bool,
 }
 
 impl<'a> RadiatingRowWidget<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         config: &'a Config,
         node: &'a view::Node,
@@ -1831,6 +1908,8 @@ impl<'a> RadiatingRowWidget<'a> {
         pair_label_style: PairLabelStyle,
         bar_width: u16,
         view: ChannelView,
+        hidden: bool,
+        selected: bool,
     ) -> Self {
         Self {
             config,
@@ -1840,7 +1919,19 @@ impl<'a> RadiatingRowWidget<'a> {
             pair_label_style,
             bar_width,
             view,
+            hidden,
+            selected,
         }
+    }
+
+    /// See `row_hidden_style`.
+    fn hidden_style(&self, base: Style) -> Style {
+        row_hidden_style(self.hidden, base, self.config)
+    }
+
+    /// See `row_text_style`.
+    fn text_style(&self, style: Style) -> Style {
+        row_text_style(self.selected, style, self.config)
     }
 
     /// `bar_width` for a row of this shape given the width available for
@@ -1916,6 +2007,8 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         let label_l = layout[1];
         let bar_l = layout[2];
 
+        let volume_style =
+            self.text_style(self.hidden_style(self.config.theme.volume));
         Line::from(Span::styled(
             radiating_row_label(
                 self.node,
@@ -1923,7 +2016,7 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
                 self.right_index,
                 self.pair_label_style,
             ),
-            self.config.theme.volume,
+            volume_style,
         ))
         .alignment(Alignment::Right)
         .render(label_area, buf);
@@ -1941,7 +2034,7 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         } else {
             format!("{}%", (left_volume * 100.0).round() as u32)
         };
-        Line::from(Span::styled(left_percent, self.config.theme.volume))
+        Line::from(Span::styled(left_percent, volume_style))
             .alignment(Alignment::Right)
             .render(label_l, buf);
 
@@ -1954,19 +2047,21 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
             .volume_empty
             .repeat((bar_l.width as usize).saturating_sub(left_count));
         let filled = self.config.char_set.volume_filled.repeat(left_count);
+        let filled_style = self.hidden_style(self.config.theme.volume_filled);
+        let empty_style = self.hidden_style(self.config.theme.volume_empty);
         let spans = if self.right_index.is_none() {
             // An unpaired channel always fills classic left-to-right,
             // like every other non-radiating bar in the app - only a
             // genuine radiating pair grows outward from a shared center
             // marker (there's no pair here to radiate from).
             vec![
-                Span::styled(filled, self.config.theme.volume_filled),
-                Span::styled(blank, self.config.theme.volume_empty),
+                Span::styled(filled, filled_style),
+                Span::styled(blank, empty_style),
             ]
         } else {
             vec![
-                Span::styled(blank, self.config.theme.volume_empty),
-                Span::styled(filled, self.config.theme.volume_filled),
+                Span::styled(blank, empty_style),
+                Span::styled(filled, filled_style),
             ]
         };
         Line::from(spans).render(bar_l, buf);
@@ -2035,10 +2130,10 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         } else {
             format!("{}%", (right_volume * 100.0).round() as u32)
         };
-        Line::from(Span::styled(right_percent, self.config.theme.volume))
+        Line::from(Span::styled(right_percent, volume_style))
             .render(label_r, buf);
 
-        Line::from(Span::styled("|", self.config.theme.volume))
+        Line::from(Span::styled("|", volume_style))
             .alignment(Alignment::Center)
             .render(center, buf);
 
@@ -2048,14 +2143,14 @@ impl StatefulWidget for RadiatingRowWidget<'_> {
         Line::from(vec![
             Span::styled(
                 self.config.char_set.volume_filled.repeat(right_count),
-                self.config.theme.volume_filled,
+                filled_style,
             ),
             Span::styled(
                 self.config
                     .char_set
                     .volume_empty
                     .repeat((bar_r.width as usize).saturating_sub(right_count)),
-                self.config.theme.volume_empty,
+                empty_style,
             ),
         ])
         .render(bar_r, buf);
