@@ -126,12 +126,28 @@ fn render_stereo_core(
     right: MeterSide,
     center: StereoCenter,
 ) {
+    // Two separate Fill(2) constraints can end up with unequal widths when
+    // the remaining space is odd (Ratatui's Fill distribution isn't
+    // guaranteed symmetric) - identical L/R peaks would then render as a
+    // visibly different number of characters just from that width
+    // difference. Computing one shared bar_width and giving both sides the
+    // same explicit Length(bar_width) makes that impossible by
+    // construction; any odd leftover column is simply unused rather than
+    // handed to one side. Same fix as StereoVolumeWidget's own bar_width
+    // above.
+    let center_width = 2;
+    let spacing_width = 2; // 2 gaps between the 3 segments, at 1 each
+    let bar_width = meter_area
+        .width
+        .saturating_sub(center_width + spacing_width)
+        / 2;
+
     let layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Fill(2),   // meter_left
-            Constraint::Length(2), // meter_live
-            Constraint::Fill(2),   // meter_right
+            Constraint::Length(bar_width),    // meter_left
+            Constraint::Length(center_width), // meter_live
+            Constraint::Length(bar_width),    // meter_right
         ])
         .spacing(1)
         .split(meter_area);

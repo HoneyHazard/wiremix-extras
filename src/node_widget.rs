@@ -2283,6 +2283,94 @@ mod tests {
             .collect()
     }
 
+    /// Like `render_node_lines`, but renders into an explicitly-sized
+    /// width instead of the fixed 40 columns the other helpers use - lets
+    /// a test sweep several widths looking for a layout bug that only
+    /// shows up when the remaining space splits unevenly at a particular
+    /// width.
+    fn render_node_lines_with_width(
+        config: &Config,
+        node: &view::Node,
+        width: u16,
+    ) -> Vec<String> {
+        let channel_state = ChannelState {
+            channel_mode: false,
+            channel_display: config.channel_display,
+            unified_imbalance: config.unified_imbalance,
+            split_style: config.split_style,
+            pair_label_style: config.pair_label_style,
+        };
+        let height = NodeWidget::node_height(channel_state, node);
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        NodeWidget::new(config, None, node, false, channel_state, None, 0.0)
+            .render(area, &mut buf, &mut Vec::new());
+
+        (0..height)
+            .map(|y| {
+                let mut line = String::new();
+                for x in 0..area.width {
+                    line.push_str(
+                        buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "),
+                    );
+                }
+                line
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stereo_meter_bars_have_symmetric_width_for_equal_peaks() {
+        // Same bug class as stereo_radiating_bars_have_symmetric_width_
+        // for_equal_volumes below, but for the peak meter's own
+        // Fill(2)/Fill(2) split (meter.rs::render_stereo_core) rather
+        // than the volume bar's - equal L/R peaks must always light the
+        // same number of characters on each side, regardless of terminal
+        // width parity.
+        use crate::atomic_f32::AtomicF32;
+        use std::sync::Arc;
+
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let mut node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
+        node.peaks =
+            Some(Arc::from([AtomicF32::new(1.0), AtomicF32::new(1.0)]));
+        // "default"/"compat" both reuse the identical glyph across
+        // active/inactive/overload (distinguished only by color at
+        // render time), which makes counting by plain-text symbol
+        // useless. extracompat is the one built-in char_set with a
+        // genuinely distinct glyph per state ('#'/'='/'!').
+        let config = config::Config::from_toml_str(
+            "peaks = \"auto\"\nchar_set = \"extracompat\"",
+        );
+
+        let active = config.char_set.meter_left_active.as_str();
+        assert_eq!(
+            active,
+            config.char_set.meter_right_active.as_str(),
+            "test assumes left/right share one active glyph to count"
+        );
+        let center = config.char_set.meter_center_right_active.as_str();
+
+        for width in 30..=60u16 {
+            let lines = render_node_lines_with_width(&config, &node, width);
+            let meter_line = &lines[2]; // [header, blank spacer, bar+meter]
+            let Some(center_index) = meter_line.rfind(center) else {
+                continue; // width too small to render a meter at all
+            };
+            let left_count = meter_line[..center_index].matches(active).count();
+            let right_count = meter_line[center_index + center.len()..]
+                .matches(active)
+                .count();
+            assert_eq!(
+                left_count, right_count,
+                "width {width}: equal L/R peaks must light an equal \
+                 number of characters on each side of the meter's \
+                 center marker"
+            );
+        }
+    }
+
     #[test]
     fn stereo_radiating_bars_have_symmetric_width_for_equal_volumes() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
@@ -3514,9 +3602,15 @@ mod tests {
             AtomicF32::new(1.0),
             AtomicF32::new(1.0),
         ]));
+        // "default"'s filled-block glyph is already individually-inset,
+        // so it correctly has no meter_split_* default (Linked/Channels
+        // render identically to Unified there) - "compat"'s thin-bar/
+        // thick-center glyph is the char_set that actually ships a real
+        // meter_split_* default (a disjoint variant, distinct from its
+        // own seamlessly-connected Unified-view glyph).
         let config = config::Config::from_toml_str(
             "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
-             peaks = \"auto\"",
+             peaks = \"auto\"\nchar_set = \"compat\"",
         );
 
         let lines = render_node_lines(&config, &node, false, false, None);
@@ -3557,14 +3651,24 @@ mod tests {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        // Every meter_split_* field the rendered line could possibly show
+        // needs its own override here - "default"'s own meter_split_*
+        // correctly stays unset (None), so any field left unoverridden
+        // would fall back to the stock glyph and defeat the "no stock
+        // glyph anywhere in a split view" assertion below for reasons
+        // unrelated to what's actually being tested.
         let config = config::Config::from_toml_str(
             "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
              peaks = \"auto\"\n\
              char_set = \"test\"\n\
              [char_sets.test]\n\
              inherit = \"default\"\n\
+             meter_split_left_inactive = \"\u{2759}\"\n\
              meter_split_left_active = \"\u{2759}\"\n\
-             meter_split_right_active = \"\u{2759}\"",
+             meter_split_right_inactive = \"\u{2759}\"\n\
+             meter_split_right_active = \"\u{2759}\"\n\
+             meter_split_center_left_active = \"\u{2759}\"\n\
+             meter_split_center_right_active = \"\u{2759}\"",
         );
         let split_glyph = "\u{2759}";
         let stock_glyph = config.char_set.meter_left_active.as_str();
