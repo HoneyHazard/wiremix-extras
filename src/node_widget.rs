@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use ratatui::{
     layout::Flex,
     prelude::{Alignment, Buffer, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{StatefulWidget, Widget},
 };
@@ -419,17 +419,24 @@ impl<'a> NodeWidget<'a> {
                 .split(row)
         };
 
-        // The whole node is the selection unit regardless of channel_mode,
-        // so the marker always spans *every* row in the block, not just
-        // the header - a continuous top/middle/.../bottom bracket, the
-        // same visual language the classic 2-line node's own
-        // `SelectorWidget` already uses (top cap on its header line,
-        // bottom cap on its bar line) generalized to however many rows
-        // this block has. A marker on the header row alone (or on a lone
-        // row in the middle) left the rest of the block looking like it
-        // belonged to no selection at all.
+        // In Channel mode (individual setting), the header row deliberately
+        // never shows the selector marker - only the individually-targeted
+        // channel row does, so there's exactly one place to look for
+        // "which channel is this" rather than two markers competing for
+        // attention. But when display is split for some other reason
+        // (linked mode's split_style = "stacked", a pair-less device like
+        // AUX0/AUX1 falling back from "radiating", or a radiating pair
+        // row - which is never individually targetable) there is no
+        // individually-targeted channel at all - the whole node is still
+        // the selection unit, so the marker needs to span *every* row in
+        // the block, not just the header - a continuous top/middle/.../
+        // bottom bracket, the same visual language the classic 2-line
+        // node's own `SelectorWidget` already uses (top cap on its header
+        // line, bottom cap on its bar line) generalized to however many
+        // rows this block has. A marker on the header row alone left every
+        // row below it looking like it belonged to no selection at all.
         let header_split = row_layout(row_areas[0]);
-        let header_marked = self.selected;
+        let header_marked = self.selected && !self.channel_state.channel_mode;
         if header_marked {
             let top_char = if groups.is_empty() {
                 &self.config.char_set.selector_middle
@@ -477,34 +484,25 @@ impl<'a> NodeWidget<'a> {
         for (row_index, group) in groups.iter().take(visible_groups).enumerate()
         {
             let split = row_layout(row_areas[row_index + 1]);
-            let is_last = row_index == visible_groups - 1;
-            let selector_char = if is_last {
-                &self.config.char_set.selector_bottom
-            } else {
-                &self.config.char_set.selector_middle
-            };
             if header_marked {
+                let is_last = row_index == visible_groups - 1;
+                let selector_char = if is_last {
+                    &self.config.char_set.selector_bottom
+                } else {
+                    &self.config.char_set.selector_middle
+                };
                 Span::styled(selector_char, self.config.theme.selector)
                     .render(split[0], buf);
             }
             match *group {
                 ChannelGroup::Single(channel_index) => {
-                    // Which specific channel Channel mode is individually
-                    // targeting, called out within the otherwise-uniform
-                    // selector bracket by reversing this one cell rather
-                    // than swapping in a different glyph - the bracket
-                    // stays visually continuous (same shape top to
-                    // bottom), just with one cell standing out.
                     let marked = self.channel_state.channel_mode
                         && self.selected
                         && self.selected_channel == Some(channel_index);
                     if marked {
                         Span::styled(
-                            selector_char,
-                            self.config
-                                .theme
-                                .selector
-                                .add_modifier(Modifier::REVERSED),
+                            &self.config.char_set.selector_middle,
+                            self.config.theme.selector,
                         )
                         .render(split[0], buf);
                     }
@@ -2509,6 +2507,94 @@ mod tests {
             .collect()
     }
 
+    /// Like `render_node_lines`, but renders into an explicitly-sized
+    /// width instead of the fixed 40 columns the other helpers use - lets
+    /// a test sweep several widths looking for a layout bug that only
+    /// shows up when the remaining space splits unevenly at a particular
+    /// width.
+    fn render_node_lines_with_width(
+        config: &Config,
+        node: &view::Node,
+        width: u16,
+    ) -> Vec<String> {
+        let channel_state = ChannelState {
+            channel_mode: false,
+            channel_display: config.channel_display,
+            unified_imbalance: config.unified_imbalance,
+            split_style: config.split_style,
+            pair_label_style: config.pair_label_style,
+        };
+        let height = NodeWidget::node_height(channel_state, node);
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        NodeWidget::new(config, None, node, false, channel_state, None, 0.0)
+            .render(area, &mut buf, &mut Vec::new());
+
+        (0..height)
+            .map(|y| {
+                let mut line = String::new();
+                for x in 0..area.width {
+                    line.push_str(
+                        buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "),
+                    );
+                }
+                line
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stereo_meter_bars_have_symmetric_width_for_equal_peaks() {
+        // Same bug class as stereo_radiating_bars_have_symmetric_width_
+        // for_equal_volumes below, but for the peak meter's own
+        // Fill(2)/Fill(2) split (meter.rs::render_stereo_core) rather
+        // than the volume bar's - equal L/R peaks must always light the
+        // same number of characters on each side, regardless of terminal
+        // width parity.
+        use crate::atomic_f32::AtomicF32;
+        use std::sync::Arc;
+
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let mut node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
+        node.peaks =
+            Some(Arc::from([AtomicF32::new(1.0), AtomicF32::new(1.0)]));
+        // "default"/"compat" both reuse the identical glyph across
+        // active/inactive/overload (distinguished only by color at
+        // render time), which makes counting by plain-text symbol
+        // useless. extracompat is the one built-in char_set with a
+        // genuinely distinct glyph per state ('#'/'='/'!').
+        let config = config::Config::from_toml_str(
+            "peaks = \"auto\"\nchar_set = \"extracompat\"",
+        );
+
+        let active = config.char_set.meter_left_active.as_str();
+        assert_eq!(
+            active,
+            config.char_set.meter_right_active.as_str(),
+            "test assumes left/right share one active glyph to count"
+        );
+        let center = config.char_set.meter_center_right_active.as_str();
+
+        for width in 30..=60u16 {
+            let lines = render_node_lines_with_width(&config, &node, width);
+            let meter_line = &lines[2]; // [header, blank spacer, bar+meter]
+            let Some(center_index) = meter_line.rfind(center) else {
+                continue; // width too small to render a meter at all
+            };
+            let left_count = meter_line[..center_index].matches(active).count();
+            let right_count = meter_line[center_index + center.len()..]
+                .matches(active)
+                .count();
+            assert_eq!(
+                left_count, right_count,
+                "width {width}: equal L/R peaks must light an equal \
+                 number of characters on each side of the meter's \
+                 center marker"
+            );
+        }
+    }
+
     #[test]
     fn stereo_radiating_bars_have_symmetric_width_for_equal_volumes() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
@@ -3406,121 +3492,42 @@ mod tests {
     }
 
     #[test]
-    fn channel_mode_marks_every_row_and_emphasizes_the_selected_channel() {
-        // The whole node is the selection unit regardless of channel_mode,
-        // so every row (header included) must carry the continuous
-        // selector bracket - see linked_mode_split_marks_every_row_since_
-        // the_whole_node_is_selected for the non-channel-mode case this
-        // mirrors. Channel mode additionally reverses the one cell
-        // belonging to the individually-targeted channel, without
-        // breaking the bracket's continuity (same glyph throughout).
+    fn channel_mode_marks_only_the_selected_channel_row() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
         let config = config::Config::from_toml_str("");
-        let top = config.char_set.selector_top.as_str();
-        let middle = config.char_set.selector_middle.as_str();
-        let bottom = config.char_set.selector_bottom.as_str();
+        let marker = config.char_set.selector_middle.as_str();
 
         let channel_0_marked =
             render_node_lines(&config, &node, true, true, Some(0));
-        assert!(
-            channel_0_marked[0].contains(top),
-            "header row: {:?}",
-            channel_0_marked
-        );
-        assert!(channel_0_marked[1].contains(middle));
-        assert!(channel_0_marked[2].contains(bottom));
-        assert!(reversed_at_marker_column(
-            &config,
-            &node,
-            true,
-            true,
-            Some(0),
-            1
-        ));
-        assert!(!reversed_at_marker_column(
-            &config,
-            &node,
-            true,
-            true,
-            Some(0),
-            0
-        ));
-        assert!(!reversed_at_marker_column(
-            &config,
-            &node,
-            true,
-            true,
-            Some(0),
-            2
-        ));
+        assert!(channel_0_marked[1].contains(marker));
+        assert!(!channel_0_marked[2].contains(marker));
 
         let channel_1_marked =
             render_node_lines(&config, &node, true, true, Some(1));
-        assert!(channel_1_marked[0].contains(top));
-        assert!(channel_1_marked[1].contains(middle));
-        assert!(channel_1_marked[2].contains(bottom));
-        assert!(reversed_at_marker_column(
-            &config,
-            &node,
-            true,
-            true,
-            Some(1),
-            2
-        ));
-        assert!(!reversed_at_marker_column(
-            &config,
-            &node,
-            true,
-            true,
-            Some(1),
-            1
-        ));
+        assert!(!channel_1_marked[1].contains(marker));
+        assert!(channel_1_marked[2].contains(marker));
 
         let not_selected =
             render_node_lines(&config, &node, true, false, Some(0));
-        assert!(!not_selected[0].contains(top));
-        assert!(!not_selected[1].contains(middle));
-        assert!(!not_selected[2].contains(bottom));
+        assert!(!not_selected[1].contains(marker));
+        assert!(!not_selected[2].contains(marker));
     }
 
-    /// Whether row `y`'s marker cell (column 0) has `Modifier::REVERSED`
-    /// set - used to check the Channel-mode individually-targeted row's
-    /// emphasis independently of the glyph itself (which stays the same
-    /// as every other row in the bracket).
-    fn reversed_at_marker_column(
-        config: &Config,
-        node: &view::Node,
-        channel_mode: bool,
-        selected: bool,
-        selected_channel: Option<usize>,
-        y: u16,
-    ) -> bool {
-        let channel_state = ChannelState {
-            channel_mode,
-            channel_display: config.channel_display,
-            unified_imbalance: config.unified_imbalance,
-            split_style: config.split_style,
-            pair_label_style: config.pair_label_style,
-        };
-        let height = NodeWidget::node_height(channel_state, node, false);
-        let area = Rect::new(0, 0, 40, height);
-        let mut buf = Buffer::empty(area);
-        NodeWidget::new(
-            config,
-            None,
-            node,
-            selected,
-            false,
-            false,
-            channel_state,
-            selected_channel,
-            0.0,
-        )
-        .render(area, &mut buf, &mut Vec::new());
-        buf.cell((0, y))
-            .is_some_and(|c| c.modifier.contains(Modifier::REVERSED))
+    #[test]
+    fn channel_mode_never_marks_the_header_row() {
+        // The header row never shows the selector marker in Channel mode,
+        // even when the node is selected - only the individually-targeted
+        // channel row should, so there's exactly one marker to look for.
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
+        let config = config::Config::from_toml_str("");
+        let marker = config.char_set.selector_middle.as_str();
+
+        let lines = render_node_lines(&config, &node, true, true, Some(0));
+        assert!(!lines[0].contains(marker));
     }
 
     #[test]
@@ -3804,17 +3811,15 @@ mod tests {
     }
 
     #[test]
-    fn paired_row_meter_uses_the_stock_glyph_by_default() {
+    fn paired_row_meter_uses_the_shared_meter_split_glyph_by_default() {
         // Per-row monitors in a Stacked block (view != Unified) share
         // one glyph selection, driven by the active view rather than
         // which widget struct happens to be drawing: a pair row's gauge
         // is a real stereo split (render_stereo), an unpaired row's is
         // a mono gauge (render_mono), but both consult the same
-        // meter_split_left/right_active field, which is unset by
-        // default - so both fall back to the same stock meter_left_
-        // active glyph Unified view already uses, with nothing to
-        // visually distinguish a split view's meter shape from Unified's
-        // own (the volume bars actually splitting is what conveys that).
+        // meter_split_left/right_active field, which now ships a real
+        // default (distinct from the stock meter_left_active glyph)
+        // instead of falling back to it.
         use crate::atomic_f32::AtomicF32;
         use std::sync::Arc;
 
@@ -3827,25 +3832,37 @@ mod tests {
             AtomicF32::new(1.0),
             AtomicF32::new(1.0),
         ]));
+        // "default"'s filled-block glyph is already individually-inset,
+        // so it correctly has no meter_split_* default (Linked/Channels
+        // render identically to Unified there) - "compat"'s thin-bar/
+        // thick-center glyph is the char_set that actually ships a real
+        // meter_split_* default (a disjoint variant, distinct from its
+        // own seamlessly-connected Unified-view glyph).
         let config = config::Config::from_toml_str(
             "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
-             peaks = \"auto\"",
+             peaks = \"auto\"\nchar_set = \"compat\"",
         );
 
         let lines = render_node_lines(&config, &node, false, false, None);
         assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
 
-        assert!(config.char_set.meter_split_left_active.is_none());
+        let split_active =
+            config.char_set.meter_split_left_active.as_deref().unwrap();
         let stock_active = config.char_set.meter_left_active.as_str();
-        assert!(
-            lines[1].contains(stock_active),
-            "a pair row's monitor gauge should fall back to the stock \
-             meter_left/right glyph by default"
+        assert_ne!(
+            split_active, stock_active,
+            "the default meter_split_* glyph should be genuinely \
+             distinct from the stock one"
         );
         assert!(
-            lines[2].contains(stock_active),
-            "an unpaired row's monitor gauge should fall back to the \
-             same stock glyph too"
+            lines[1].contains(split_active),
+            "a pair row's monitor gauge should use the default \
+             meter_split_left/right glyph"
+        );
+        assert!(
+            lines[2].contains(split_active),
+            "an unpaired row's monitor gauge should use the same \
+             default split glyph too"
         );
     }
 
@@ -3864,16 +3881,22 @@ mod tests {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
+        // Every meter_split_* field the rendered line could possibly show
+        // needs its own override here - "default"'s own meter_split_*
+        // correctly stays unset (None), so any field left unoverridden
+        // would fall back to the stock glyph and defeat the "no stock
+        // glyph anywhere in a split view" assertion below for reasons
+        // unrelated to what's actually being tested.
         let config = config::Config::from_toml_str(
             "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
              peaks = \"auto\"\n\
              char_set = \"test\"\n\
              [char_sets.test]\n\
              inherit = \"default\"\n\
-             meter_split_left_active = \"\u{2759}\"\n\
-             meter_split_right_active = \"\u{2759}\"\n\
              meter_split_left_inactive = \"\u{2759}\"\n\
+             meter_split_left_active = \"\u{2759}\"\n\
              meter_split_right_inactive = \"\u{2759}\"\n\
+             meter_split_right_active = \"\u{2759}\"\n\
              meter_split_center_left_active = \"\u{2759}\"\n\
              meter_split_center_right_active = \"\u{2759}\"\n\
              meter_left_inactive_overload = \"\u{2759}\"\n\
