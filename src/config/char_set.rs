@@ -26,9 +26,11 @@ pub struct CharSetOverlay {
     volume_empty: Option<String>,
     volume_filled: Option<String>,
     meter_left_inactive: Option<String>,
+    meter_left_inactive_overload: Option<String>,
     meter_left_active: Option<String>,
     meter_left_overload: Option<String>,
     meter_right_inactive: Option<String>,
+    meter_right_inactive_overload: Option<String>,
     meter_right_active: Option<String>,
     meter_right_overload: Option<String>,
     meter_center_left_inactive: Option<String>,
@@ -112,9 +114,11 @@ impl TryFrom<CharSetOverlay> for CharSet {
         validate_and_set!(volume_empty, 1);
         validate_and_set!(volume_filled, 1);
         validate_and_set!(meter_left_inactive, 1);
+        validate_and_set!(meter_left_inactive_overload, 1);
         validate_and_set!(meter_left_active, 1);
         validate_and_set!(meter_left_overload, 1);
         validate_and_set!(meter_right_inactive, 1);
+        validate_and_set!(meter_right_inactive_overload, 1);
         validate_and_set!(meter_right_active, 1);
         validate_and_set!(meter_right_overload, 1);
         validate_and_set!(meter_center_left_inactive, 1);
@@ -155,9 +159,11 @@ impl Default for CharSet {
             volume_empty: String::from("╌"),
             volume_filled: String::from("━"),
             meter_left_inactive: String::from("▮"),
+            meter_left_inactive_overload: String::from("▮"),
             meter_left_active: String::from("▮"),
             meter_left_overload: String::from("▮"),
             meter_right_inactive: String::from("▮"),
+            meter_right_inactive_overload: String::from("▮"),
             meter_right_active: String::from("▮"),
             meter_right_overload: String::from("▮"),
             meter_center_left_inactive: String::from("▮"),
@@ -203,9 +209,11 @@ impl CharSet {
             volume_empty: String::from("─"),
             volume_filled: String::from("━"),
             meter_left_inactive: String::from("┃"),
+            meter_left_inactive_overload: String::from("┃"),
             meter_left_active: String::from("┃"),
             meter_left_overload: String::from("┃"),
             meter_right_inactive: String::from("┃"),
+            meter_right_inactive_overload: String::from("┃"),
             meter_right_active: String::from("┃"),
             meter_right_overload: String::from("┃"),
             meter_center_left_inactive: String::from("█"),
@@ -237,9 +245,11 @@ impl CharSet {
             volume_empty: String::from("-"),
             volume_filled: String::from("="),
             meter_left_inactive: String::from("="),
+            meter_left_inactive_overload: String::from("="),
             meter_left_active: String::from("#"),
             meter_left_overload: String::from("!"),
             meter_right_inactive: String::from("="),
+            meter_right_inactive_overload: String::from("="),
             meter_right_active: String::from("#"),
             meter_right_overload: String::from("!"),
             meter_center_left_inactive: String::from("["),
