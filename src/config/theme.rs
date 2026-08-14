@@ -23,6 +23,7 @@ pub struct ThemeOverlay {
     volume_empty: Option<StyleDef>,
     volume_filled: Option<StyleDef>,
     meter_inactive: Option<StyleDef>,
+    meter_inactive_overload: Option<StyleDef>,
     meter_active: Option<StyleDef>,
     meter_overload: Option<StyleDef>,
     meter_center_inactive: Option<StyleDef>,
@@ -102,6 +103,7 @@ impl TryFrom<ThemeOverlay> for Theme {
         set!(volume_empty);
         set!(volume_filled);
         set!(meter_inactive);
+        set!(meter_inactive_overload);
         set!(meter_active);
         set!(meter_overload);
         set!(meter_center_inactive);
@@ -137,6 +139,11 @@ impl Default for Theme {
             volume_empty: Style::default().fg(Color::DarkGray),
             volume_filled: Style::default().fg(Color::LightBlue),
             meter_inactive: Style::default().fg(Color::DarkGray),
+            // Defaults to the exact same style as meter_inactive, so this
+            // zone's preview is invisible until you actually customize it
+            // (e.g. to a dim red) - see meter_inactive_overload's own docs
+            // in wiremix.toml.
+            meter_inactive_overload: Style::default().fg(Color::DarkGray),
             meter_active: Style::default().fg(Color::LightGreen),
             meter_overload: Style::default().fg(Color::Red),
             meter_center_inactive: Style::default().fg(Color::DarkGray),
@@ -181,6 +188,8 @@ impl Theme {
             volume_empty: Style::default().add_modifier(Modifier::DIM),
             volume_filled: Style::default().add_modifier(Modifier::BOLD),
             meter_inactive: Style::default().add_modifier(Modifier::DIM),
+            meter_inactive_overload: Style::default()
+                .add_modifier(Modifier::DIM),
             meter_active: Style::default().add_modifier(Modifier::BOLD),
             meter_overload: Style::default().add_modifier(Modifier::BOLD),
             meter_center_inactive: Style::default().add_modifier(Modifier::DIM),
@@ -214,6 +223,7 @@ impl Theme {
             volume_empty: Style::default(),
             volume_filled: Style::default(),
             meter_inactive: Style::default(),
+            meter_inactive_overload: Style::default(),
             meter_active: Style::default(),
             meter_overload: Style::default(),
             meter_center_inactive: Style::default(),
