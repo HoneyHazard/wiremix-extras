@@ -149,22 +149,17 @@ impl Default for CharSet {
             list_more: String::from("•••"),
             volume_empty: String::from("╌"),
             volume_filled: String::from("━"),
-            // Hollow rectangle for not-yet-lit positions, filled for lit
-            // ones - same cell width/placement as meter_left/right_
-            // active/overload below, so switching between them (as the
-            // peak rises and falls) never shifts anything else in the
-            // row. Paired with meter_inactive/meter_inactive_overload's
-            // own dim green/red in the default theme, this previews
-            // *both* which zone a not-yet-lit position belongs to (via
-            // color) and that it hasn't been reached yet (via the empty
-            // outline), the way a pulsemixer-style hollow/filled bar
-            // does.
-            meter_left_inactive: String::from("▯"),
-            meter_left_inactive_overload: String::from("▯"),
+            // Same filled rectangle glyph as meter_left/right_active/
+            // overload below, for not-yet-lit positions too - the zone
+            // preview is carried entirely by color (meter_inactive/
+            // meter_inactive_overload's own dim green/red in the default
+            // theme below), not by a different shape.
+            meter_left_inactive: String::from("▮"),
+            meter_left_inactive_overload: String::from("▮"),
             meter_left_active: String::from("▮"),
             meter_left_overload: String::from("▮"),
-            meter_right_inactive: String::from("▯"),
-            meter_right_inactive_overload: String::from("▯"),
+            meter_right_inactive: String::from("▮"),
+            meter_right_inactive_overload: String::from("▮"),
             meter_right_active: String::from("▮"),
             meter_right_overload: String::from("▮"),
             meter_center_left_inactive: String::from("▮"),

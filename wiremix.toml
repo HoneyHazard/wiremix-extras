@@ -405,22 +405,20 @@ list_more = "•••"
 volume_empty = "╌"
 volume_filled = "━"
 # Peak meter. Inactive = unlit, active = lit, overload = greater than 0.0 dB
-# Mono meters use only the right side characters. Inactive positions use a
-# hollow rectangle (same cell width/placement as the filled one active/
-# overload use) rather than reusing the filled glyph - pulsemixer draws
-# its volume bars with filled/hollow rectangles the same way.
-meter_left_inactive = "▯"
+# Mono meters use only the right side characters. Inactive positions use
+# the same filled rectangle as active/overload - no separate shape.
+meter_left_inactive = "▮"
 meter_left_active = "▮"
 meter_left_overload = "▮"
-meter_right_inactive = "▯"
+meter_right_inactive = "▮"
 meter_right_active = "▮"
 meter_right_overload = "▮"
 # The glyph for the portion of an unlit meter past the overload boundary -
-# see meter_inactive_overload above. Defaults to the same hollow glyph as
-# meter_left/right_inactive - meter_inactive_overload's dim red is what
-# marks it as the overload zone specifically, not a different shape.
-meter_left_inactive_overload = "▯"
-meter_right_inactive_overload = "▯"
+# see meter_inactive_overload above. Same glyph as meter_left/right_
+# inactive - meter_inactive_overload's dim red is what marks it as the
+# overload zone specifically, not a different shape.
+meter_left_inactive_overload = "▮"
+meter_right_inactive_overload = "▮"
 # The "live" indicator in the center of the meter
 # Mono meters use only the right side
 meter_center_left_inactive = "▮"
@@ -526,10 +524,11 @@ meter_left_overload = "┃"
 meter_right_inactive = "┃"
 meter_right_active = "┃"
 meter_right_overload = "┃"
-# compat's thin-line glyphs don't lend themselves to a hollow/filled
-# rectangle pair the way default's blockier "▮"/"▯" do - a small centered
-# dot reads better against "┃" without looking like a different,
-# unrelated glyph:
+# Same "▮" throughout, as default does above - the overload zone is
+# purely a color preview (meter_inactive_overload's own dim red below),
+# not a shape change. An alternative some users may prefer: a small
+# centered dot, distinct from "┃" without looking like an unrelated
+# glyph:
 # meter_left_inactive_overload = "·"
 # meter_right_inactive_overload = "·"
 meter_left_inactive_overload = "┃"
