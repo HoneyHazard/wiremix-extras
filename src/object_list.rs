@@ -14,7 +14,10 @@ use crossterm::event::{MouseButton, MouseEventKind};
 use smallvec::smallvec;
 
 use crate::app::{Action, MouseArea};
-use crate::config::Config;
+use crate::config::{
+    ChannelDisplay, ChannelState, ChannelView, Config, PairLabelStyle,
+    SplitStyle, UnifiedImbalance,
+};
 use crate::device_kind::DeviceKind;
 use crate::device_widget::DeviceWidget;
 use crate::dropdown_widget::DropdownWidget;
@@ -45,6 +48,29 @@ pub struct ObjectList {
     /// it only changes on terminal resize and `update()` already recomputes
     /// it every frame from the current area.
     page_size: usize,
+    /// Whether keyboard navigation and volume actions target individual
+    /// channels of the selected node instead of the whole node together.
+    /// See `selected_channel`.
+    pub channel_mode: bool,
+    /// Which channel of the selected node is targeted. Only meaningful
+    /// while `channel_mode` is on; `None` whenever `channel_mode` is off,
+    /// or the selected object has fewer than two channels to cycle
+    /// through (nothing to individually target).
+    pub selected_channel: Option<usize>,
+    /// Whether a node's volume is ever shown as more than one bar/row
+    /// when `channel_mode` is off (linked setting). Seeded from
+    /// `Config::channel_display` at startup; toggled live via
+    /// `Action::CycleChannelDisplay`.
+    pub channel_display: ChannelDisplay,
+    /// See `Config::unified_imbalance`. Seeded from config; no runtime
+    /// toggle yet.
+    pub unified_imbalance: UnifiedImbalance,
+    /// See `Config::split_style`. Seeded from config; no runtime toggle
+    /// yet.
+    pub split_style: SplitStyle,
+    /// See `Config::pair_label_style`. Seeded from config; no runtime
+    /// toggle yet.
+    pub pair_label_style: PairLabelStyle,
 }
 
 impl ObjectList {
@@ -61,23 +87,159 @@ impl ObjectList {
     pub fn down(&mut self, view: &view::View) {
         if self.dropdown_state.selected().is_some() {
             self.dropdown_state.select_next();
-        } else {
-            let new_selected = view.next_id(self.list_kind, self.selected);
-            if new_selected.is_some() {
-                self.select(new_selected);
+            return;
+        }
+
+        // In channel mode, step to the selected node's next channel before
+        // advancing to the next node - the channel cursor folds into the
+        // same up/down navigation stream rather than needing its own keys.
+        if let (Some(object_id), Some(channel)) =
+            (self.selected, self.selected_channel)
+        {
+            if channel.saturating_add(1) < self.channel_count(view, object_id) {
+                self.selected_channel = Some(channel + 1);
+                return;
             }
+        }
+
+        let new_selected = view.next_id(self.list_kind, self.selected);
+        if new_selected.is_some() {
+            self.select(view, new_selected, false);
         }
     }
 
     pub fn up(&mut self, view: &view::View) {
         if self.dropdown_state.selected().is_some() {
             self.dropdown_state.select_previous();
-        } else {
-            let new_selected = view.previous_id(self.list_kind, self.selected);
-            if new_selected.is_some() {
-                self.select(new_selected);
+            return;
+        }
+
+        if let Some(channel) = self.selected_channel {
+            if channel > 0 {
+                self.selected_channel = Some(channel - 1);
+                return;
             }
         }
+
+        let new_selected = view.previous_id(self.list_kind, self.selected);
+        if new_selected.is_some() {
+            // Arriving via `up()` lands on the *last* channel, mirroring
+            // how `down()` lands on the first - so up/down are exact
+            // reverses of each other rather than both always landing on
+            // channel 0.
+            self.select(view, new_selected, true);
+        }
+    }
+
+    /// Toggles whether keyboard navigation and volume actions target
+    /// individual channels of the selected node ("Channel mode" - see the
+    /// multichannel design notes) instead of the whole node together.
+    pub fn toggle_channel_mode(&mut self, view: &view::View) {
+        self.channel_mode = !self.channel_mode;
+        self.selected_channel =
+            self.initial_channel(view, self.selected, false);
+    }
+
+    /// Cycles the display axis between showing a node's volume as one
+    /// combined bar/row ("unified") and always splitting it ("always") -
+    /// see `Config::channel_display`. Independent of `channel_mode`.
+    pub fn cycle_channel_display(&mut self) {
+        self.channel_display = match self.channel_display {
+            ChannelDisplay::Unified => ChannelDisplay::Always,
+            ChannelDisplay::Always => ChannelDisplay::Unified,
+        };
+    }
+
+    /// The current `ChannelView` - see `ChannelState::view`.
+    pub fn channel_view(&self) -> ChannelView {
+        self.channel_state().view()
+    }
+
+    /// Switches directly to the given `ChannelView` - see
+    /// `Action::SelectView`. `unified_imbalance`/`split_style`/
+    /// `pair_label_style` are untouched; they're orthogonal display
+    /// refinements, not part of the view itself.
+    pub fn select_view(&mut self, target: ChannelView, view: &view::View) {
+        match target {
+            ChannelView::Unified => {
+                self.channel_mode = false;
+                self.channel_display = ChannelDisplay::Unified;
+            }
+            ChannelView::Linked => {
+                self.channel_mode = false;
+                self.channel_display = ChannelDisplay::Always;
+            }
+            ChannelView::Channels => {
+                self.channel_mode = true;
+            }
+        }
+        self.selected_channel =
+            self.initial_channel(view, self.selected, false);
+    }
+
+    /// Advances to the next `ChannelView` in `view_cycle`, wrapping - see
+    /// `Action::CycleView`. If the current view isn't in `view_cycle`
+    /// (reached via `select_view` while it was excluded), lands on
+    /// `view_cycle`'s first entry instead of trying to guess a "next"
+    /// relative to a view that isn't part of the cycle.
+    pub fn cycle_channel_view(
+        &mut self,
+        view_cycle: &[ChannelView],
+        view: &view::View,
+    ) {
+        let current = self.channel_view();
+        let next = match view_cycle.iter().position(|v| *v == current) {
+            Some(i) => view_cycle[(i + 1) % view_cycle.len()],
+            None => *view_cycle.first().unwrap_or(&ChannelView::Unified),
+        };
+        self.select_view(next, view);
+    }
+
+    /// Bundles the display/setting axes for passing to `NodeWidget`.
+    pub fn channel_state(&self) -> ChannelState {
+        ChannelState {
+            channel_mode: self.channel_mode,
+            channel_display: self.channel_display,
+            unified_imbalance: self.unified_imbalance,
+            split_style: self.split_style,
+            pair_label_style: self.pair_label_style,
+        }
+    }
+
+    /// Number of channels the given object has to cycle through in channel
+    /// mode. Always 0 for devices - device rows don't carry per-channel
+    /// volume data the way nodes do.
+    fn channel_count(&self, view: &view::View, object_id: ObjectId) -> usize {
+        if matches!(self.list_kind, ListKind::Device) {
+            return 0;
+        }
+        view.nodes
+            .get(&object_id)
+            .map_or(0, |node| node.volumes.len())
+    }
+
+    /// The channel a newly-selected object should start on, if channel
+    /// mode is active and the object has more than one channel to cycle
+    /// through - `None` otherwise (including whenever channel mode is
+    /// off). `from_end` picks which end: `false` for the first channel
+    /// (landing via `down()`, or any non-directional selection), `true`
+    /// for the last (landing via `up()`, so up/down are exact reverses of
+    /// each other instead of both always landing on channel 0).
+    fn initial_channel(
+        &self,
+        view: &view::View,
+        object_id: Option<ObjectId>,
+        from_end: bool,
+    ) -> Option<usize> {
+        if !self.channel_mode {
+            return None;
+        }
+        let object_id = object_id?;
+        let count = self.channel_count(view, object_id);
+        if count <= 1 {
+            return None;
+        }
+        Some(if from_end { count - 1 } else { 0 })
     }
 
     /// Move the selection down by a page (however many objects are visible
@@ -98,7 +260,7 @@ impl ObjectList {
             }
         }
         if new_selected.is_some() {
-            self.select(new_selected);
+            self.select(view, new_selected, false);
         }
     }
 
@@ -116,7 +278,7 @@ impl ObjectList {
             }
         }
         if new_selected.is_some() {
-            self.select(new_selected);
+            self.select(view, new_selected, true);
         }
     }
 
@@ -127,7 +289,7 @@ impl ObjectList {
             return;
         }
         if let Some(&id) = view.object_ids(self.list_kind).first() {
-            self.select(Some(id));
+            self.select(view, Some(id), false);
         }
     }
 
@@ -138,7 +300,7 @@ impl ObjectList {
             return;
         }
         if let Some(&id) = view.object_ids(self.list_kind).last() {
-            self.select(Some(id));
+            self.select(view, Some(id), true);
         }
     }
 
@@ -164,7 +326,7 @@ impl ObjectList {
                 view.previous_id(self.list_kind, Some(object_id))
                     .filter(|&id| id != object_id)
             });
-        self.select(candidate);
+        self.select(view, candidate, false);
     }
 
     fn dropdown_open(&mut self, view: &view::View) {
@@ -246,6 +408,48 @@ impl ObjectList {
         false
     }
 
+    pub fn set_channel_absolute_volume(
+        &mut self,
+        view: &view::View,
+        channel: usize,
+        volume: f32,
+        max: Option<f32>,
+    ) -> bool {
+        if matches!(self.list_kind, ListKind::Device) {
+            return false;
+        }
+        if let Some(node_id) = self.selected {
+            return view.channel_volume(
+                node_id,
+                channel,
+                VolumeAdjustment::Absolute(volume),
+                max,
+            );
+        }
+        false
+    }
+
+    pub fn set_channel_relative_volume(
+        &mut self,
+        view: &view::View,
+        channel: usize,
+        volume: f32,
+        max: Option<f32>,
+    ) -> bool {
+        if matches!(self.list_kind, ListKind::Device) {
+            return false;
+        }
+        if let Some(node_id) = self.selected {
+            return view.channel_volume(
+                node_id,
+                channel,
+                VolumeAdjustment::Relative(volume),
+                max,
+            );
+        }
+        false
+    }
+
     pub fn set_relative_volume(
         &mut self,
         view: &view::View,
@@ -283,8 +487,14 @@ impl ObjectList {
             .and_then(|selected| view.position(self.list_kind, selected))
     }
 
-    fn select(&mut self, object_id: Option<ObjectId>) {
+    fn select(
+        &mut self,
+        view: &view::View,
+        object_id: Option<ObjectId>,
+        from_end: bool,
+    ) {
         self.selected = object_id;
+        self.selected_channel = self.initial_channel(view, object_id, from_end);
         // Close the dropdown in case it is open for the previously-selected
         // object. This can happen when the object is removed from PipeWire
         // while the dropdown is open.
@@ -307,7 +517,8 @@ impl ObjectList {
 
         let last = cmp::min(
             objects.len(),
-            self.top + self.visible_count(area, show_dividers, compact_layout),
+            self.top
+                + self.visible_count(view, area, show_dividers, compact_layout),
         );
 
         // Always include object 0 - the global PipeWire state.
@@ -344,32 +555,62 @@ impl ObjectList {
     /// Returns the number of objects visible.
     fn visible_count(
         &self,
+        view: &view::View,
         area: &Rect,
         show_dividers: bool,
         compact_layout: bool,
     ) -> usize {
         let (_, list_area, _) = self.areas(area);
-        let (spacing, height) = match self.list_kind {
-            ListKind::Node(_) => (NodeWidget::spacing(), NodeWidget::height()),
-            ListKind::Device => {
-                (DeviceWidget::spacing(), DeviceWidget::height())
-            }
+        let spacing = match self.list_kind {
+            ListKind::Node(_) => NodeWidget::spacing(),
+            ListKind::Device => DeviceWidget::spacing(),
         };
         // One extra row of spacing to center a divider between items - see
         // the same +1 in ObjectListWidget::render() and the comment on
         // render_divider() below.
         let spacing = if show_dividers { spacing + 1 } else { spacing };
-        // One fewer row per item - the internal gap between an item's
-        // header/bar rows - when compact_layout is on; see the matching
-        // -1 in ObjectListWidget::render() and NodeWidget/DeviceWidget's
-        // own render() methods.
-        let height = if compact_layout {
-            height.saturating_sub(1)
-        } else {
-            height
-        };
-        let full_height = height.saturating_add(spacing);
-        (list_area.height / full_height) as usize
+
+        let mut used = 0u16;
+        let mut count = 0usize;
+        for height in self.item_heights(view) {
+            // One fewer row per item - the internal gap between an item's
+            // header/bar rows - when compact_layout is on; see the
+            // matching -1 in ObjectListWidget::render() and NodeWidget/
+            // DeviceWidget's own render() methods.
+            let height = if compact_layout {
+                height.saturating_sub(1)
+            } else {
+                height
+            };
+            let step = height.saturating_add(spacing);
+            if used.saturating_add(step) > list_area.height {
+                break;
+            }
+            used = used.saturating_add(step);
+            count += 1;
+        }
+        count
+    }
+
+    /// Raw (spacing-excluded) height of every object visible from `top`
+    /// onward, in list order. Node heights vary with the current channel
+    /// display/setting state and each node's own channel count/values
+    /// (see `NodeWidget::node_height`); device heights are always
+    /// uniform.
+    fn item_heights(&self, view: &view::View) -> Vec<u16> {
+        let channel_state = self.channel_state();
+        match self.list_kind {
+            ListKind::Node(node_kind) => view
+                .full_nodes(node_kind)
+                .iter()
+                .skip(self.top)
+                .map(|node| NodeWidget::node_height(channel_state, node))
+                .collect(),
+            ListKind::Device => {
+                let count = view.full_devices().len().saturating_sub(self.top);
+                vec![DeviceWidget::height(); count]
+            }
+        }
     }
 
     /// Reconciles changes to objects, viewport, and selection.
@@ -387,14 +628,14 @@ impl ObjectList {
     ) {
         let selected_index = self.selected_index(view).or_else(|| {
             // There's nothing selected! Select the first item and try again.
-            self.select(view.next_id(self.list_kind, None));
+            self.select(view, view.next_id(self.list_kind, None), false);
             self.selected_index(view)
         });
 
         let objects_len = view.len(self.list_kind);
 
         let visible_count =
-            self.visible_count(&area, show_dividers, compact_layout);
+            self.visible_count(view, &area, show_dividers, compact_layout);
         self.page_size = visible_count;
 
         // If objects were removed and the viewport is now below the visible
@@ -423,7 +664,7 @@ impl ObjectList {
                         self.top = selected_index;
                     }
                 }
-                None => self.select(None), // The selected object is gone!
+                None => self.select(view, None, false), // The selected object is gone!
             }
         }
     }
@@ -448,6 +689,11 @@ pub struct ObjectListWidget<'a, 'b> {
     pub config: &'a Config,
     pub hidden_instance: &'a HashSet<ObjectId>,
     pub hidden_permanent: &'a HashSet<ObjectId>,
+    /// Seconds elapsed since `App` started - the shared time reference
+    /// for `unified_imbalance = "cycle"`'s stateless phase-offset
+    /// rendering. See `NodeWidget::node_height`/`render` for how it's
+    /// used; irrelevant (and unused) for device rows.
+    pub elapsed_seconds: f32,
 }
 
 struct ObjectListRenderContext<'a> {
@@ -619,6 +865,9 @@ impl ObjectListWidget<'_, '_> {
                 selected,
                 hidden_instance,
                 hidden_permanent,
+                self.object_list.channel_state(),
+                self.object_list.selected_channel,
+                self.elapsed_seconds,
             )
             .render(object_area, buf, mouse_areas);
 
@@ -814,11 +1063,9 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
             smallvec![Action::MoveDown],
         ));
 
-        let (spacing, height) = match self.object_list.list_kind {
-            ListKind::Node(_) => (NodeWidget::spacing(), NodeWidget::height()),
-            ListKind::Device => {
-                (DeviceWidget::spacing(), DeviceWidget::height())
-            }
+        let spacing = match self.object_list.list_kind {
+            ListKind::Node(_) => NodeWidget::spacing(),
+            ListKind::Device => DeviceWidget::spacing(),
         };
         // One extra row of spacing to center a divider between items - see
         // ObjectList::visible_count() and the comment on render_divider()
@@ -828,18 +1075,30 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
         } else {
             spacing
         };
-        // One fewer row per item - the internal gap between an item's
-        // header/bar rows - when compact_layout is on; see the matching
-        // -1 in ObjectList::visible_count() and NodeWidget/DeviceWidget's
-        // own render() methods.
-        let height = if self.config.compact_layout {
-            height.saturating_sub(1)
-        } else {
-            height
-        };
-
-        let full_object_height = height.saturating_add(spacing);
-        let objects_visible = (list_area.height / full_object_height) as usize;
+        // Real, possibly heterogeneous per-object heights (a node in
+        // channel mode is taller than one that isn't) - walked from `top`
+        // to find how many whole objects fit, mirroring
+        // `ObjectList::visible_count`'s own walk.
+        let item_heights = self.object_list.item_heights(self.view);
+        let mut used = 0u16;
+        let mut objects_visible = 0usize;
+        for &item_height in &item_heights {
+            // One fewer row per item - the internal gap between an item's
+            // header/bar rows - when compact_layout is on; see the
+            // matching -1 in ObjectList::visible_count() and NodeWidget/
+            // DeviceWidget's own render() methods.
+            let item_height = if self.config.compact_layout {
+                item_height.saturating_sub(1)
+            } else {
+                item_height
+            };
+            let step = item_height.saturating_add(spacing);
+            if used.saturating_add(step) > list_area.height {
+                break;
+            }
+            used = used.saturating_add(step);
+            objects_visible += 1;
+        }
 
         let len = self.view.len(self.object_list.list_kind);
 
@@ -860,8 +1119,9 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
         let is_bottom_last =
             self.object_list.top.saturating_add(objects_visible)
                 == len.saturating_sub(1);
-        let is_bottom_enough =
-            (list_area.height % full_object_height) >= height;
+        let is_bottom_enough = item_heights
+            .get(objects_visible)
+            .map_or(true, |&h| list_area.height.saturating_sub(used) >= h);
         if self.object_list.top.saturating_add(objects_visible) < len
             && !(is_bottom_last && is_bottom_enough)
         {
@@ -874,12 +1134,15 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
         }
 
         let objects_layout = {
-            let object_height = height;
-            let mut constraints =
-                vec![Constraint::Length(object_height); objects_visible];
+            let mut constraints: Vec<Constraint> = item_heights
+                .iter()
+                .take(objects_visible)
+                .map(|&h| Constraint::Length(h))
+                .collect();
             // A variable-length constraint for a partial last object
-            constraints.push(Constraint::Max(object_height));
-            let constraints = constraints;
+            let partial_height =
+                item_heights.get(objects_visible).copied().unwrap_or(0);
+            constraints.push(Constraint::Max(partial_height));
 
             Layout::default()
                 .direction(Direction::Vertical)
@@ -1216,6 +1479,417 @@ mod tests {
             .map(ObjectId::from_raw_id)
             .collect();
         assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn channel_mode_down_cycles_channels_before_advancing_node() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.channel_mode = true;
+
+        // Selecting the first object lands on its first channel - every
+        // `init()` node has 2 channels.
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
+        assert_eq!(object_list.selected_channel, Some(0));
+
+        // Down again steps to channel 1 of the same node.
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
+        assert_eq!(object_list.selected_channel, Some(1));
+
+        // Down again, past the last channel, advances to the next node and
+        // resets to its first channel.
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(2)));
+        assert_eq!(object_list.selected_channel, Some(0));
+    }
+
+    #[test]
+    fn channel_mode_up_cycles_channels_before_receding_node() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.channel_mode = true;
+
+        // Walk down to node 2, channel 1.
+        object_list.down(&view);
+        object_list.down(&view);
+        object_list.down(&view);
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(2)));
+        assert_eq!(object_list.selected_channel, Some(1));
+
+        // Up steps back to channel 0 of the same node.
+        object_list.up(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(2)));
+        assert_eq!(object_list.selected_channel, Some(0));
+
+        // Up again recedes to the previous node, landing on its *last*
+        // channel - up/down are exact reverses of each other.
+        object_list.up(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
+        assert_eq!(object_list.selected_channel, Some(1));
+    }
+
+    #[test]
+    fn channel_mode_up_and_down_are_exact_reverses() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.channel_mode = true;
+
+        // Walk down 5 steps, recording (selected, selected_channel) after
+        // each one.
+        let mut visited = Vec::new();
+        for _ in 0..5 {
+            object_list.down(&view);
+            visited.push((object_list.selected, object_list.selected_channel));
+        }
+
+        // Walking back up the same number of steps should retrace exactly
+        // the same sequence of (node, channel) pairs, in reverse, ending
+        // one step before the final down() landed.
+        for expected in visited[..4].iter().rev() {
+            object_list.up(&view);
+            assert_eq!(
+                (object_list.selected, object_list.selected_channel),
+                *expected
+            );
+        }
+    }
+
+    #[test]
+    fn channel_mode_skips_cycling_for_single_channel_node() {
+        let mut state = State::default();
+        let wirehose = mock::WirehoseHandle::default();
+
+        let mono_id = ObjectId::from_raw_id(1);
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Mono node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_media_name(String::from("Media name"));
+        props.set_node_name(String::from("mono"));
+        props.set_object_serial(1);
+        state.update(StateEvent::NodeProperties {
+            object_id: mono_id,
+            props,
+        });
+        state.update(StateEvent::NodeVolumes {
+            object_id: mono_id,
+            volumes: vec![0.0],
+        });
+        state.update(StateEvent::NodeMute {
+            object_id: mono_id,
+            mute: false,
+        });
+
+        let stereo_id = ObjectId::from_raw_id(2);
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Stereo node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_media_name(String::from("Media name"));
+        props.set_node_name(String::from("stereo"));
+        props.set_object_serial(2);
+        state.update(StateEvent::NodeProperties {
+            object_id: stereo_id,
+            props,
+        });
+        state.update(StateEvent::NodeVolumes {
+            object_id: stereo_id,
+            volumes: vec![0.0, 0.0],
+        });
+        state.update(StateEvent::NodeMute {
+            object_id: stereo_id,
+            mute: false,
+        });
+
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.channel_mode = true;
+
+        // The mono node has nothing to cycle through.
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(mono_id));
+        assert_eq!(object_list.selected_channel, None);
+
+        // Down again moves straight to the next (stereo) node, which does.
+        object_list.down(&view);
+        assert_eq!(object_list.selected, Some(stereo_id));
+        assert_eq!(object_list.selected_channel, Some(0));
+    }
+
+    #[test]
+    fn toggle_channel_mode_sets_initial_channel_for_current_selection() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.down(&view);
+        assert_eq!(object_list.selected_channel, None);
+
+        object_list.toggle_channel_mode(&view);
+        assert!(object_list.channel_mode);
+        assert_eq!(object_list.selected_channel, Some(0));
+
+        object_list.toggle_channel_mode(&view);
+        assert!(!object_list.channel_mode);
+        assert_eq!(object_list.selected_channel, None);
+    }
+
+    #[test]
+    fn channel_view_derives_from_channel_mode_and_channel_display() {
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        assert_eq!(object_list.channel_view(), ChannelView::Unified);
+
+        object_list.channel_display = ChannelDisplay::Always;
+        assert_eq!(object_list.channel_view(), ChannelView::Linked);
+
+        // channel_mode wins regardless of channel_display - a lone
+        // channel_mode = true node with channel_display left "unified"
+        // still renders split (see NodeWidget), so it must report as
+        // Channels here too.
+        object_list.channel_mode = true;
+        assert_eq!(object_list.channel_view(), ChannelView::Channels);
+        object_list.channel_display = ChannelDisplay::Unified;
+        assert_eq!(object_list.channel_view(), ChannelView::Channels);
+    }
+
+    #[test]
+    fn select_view_switches_channel_mode_and_channel_display() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.down(&view);
+
+        object_list.select_view(ChannelView::Linked, &view);
+        assert!(!object_list.channel_mode);
+        assert_eq!(object_list.channel_display, ChannelDisplay::Always);
+        assert_eq!(object_list.selected_channel, None);
+
+        object_list.select_view(ChannelView::Channels, &view);
+        assert!(object_list.channel_mode);
+        assert_eq!(object_list.selected_channel, Some(0));
+
+        object_list.select_view(ChannelView::Unified, &view);
+        assert!(!object_list.channel_mode);
+        assert_eq!(object_list.channel_display, ChannelDisplay::Unified);
+        assert_eq!(object_list.selected_channel, None);
+    }
+
+    #[test]
+    fn cycle_channel_view_advances_through_view_cycle_and_wraps() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+        let cycle = [
+            ChannelView::Unified,
+            ChannelView::Linked,
+            ChannelView::Channels,
+        ];
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.down(&view);
+        assert_eq!(object_list.channel_view(), ChannelView::Unified);
+
+        object_list.cycle_channel_view(&cycle, &view);
+        assert_eq!(object_list.channel_view(), ChannelView::Linked);
+
+        object_list.cycle_channel_view(&cycle, &view);
+        assert_eq!(object_list.channel_view(), ChannelView::Channels);
+
+        // Wraps back to the first entry after the last.
+        object_list.cycle_channel_view(&cycle, &view);
+        assert_eq!(object_list.channel_view(), ChannelView::Unified);
+    }
+
+    #[test]
+    fn cycle_channel_view_lands_on_first_entry_when_current_view_is_excluded() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+        // Unified excluded from the cycle - reachable via select_view, but
+        // cycling from it should land on the cycle's first entry rather
+        // than trying to compute a "next" relative to a view that isn't
+        // part of the cycle at all.
+        let cycle = [ChannelView::Linked, ChannelView::Channels];
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        object_list.down(&view);
+        assert_eq!(object_list.channel_view(), ChannelView::Unified);
+
+        object_list.cycle_channel_view(&cycle, &view);
+        assert_eq!(object_list.channel_view(), ChannelView::Linked);
+    }
+
+    #[test]
+    fn channel_mode_accounts_for_taller_nodes_in_visible_count() {
+        let mut state = State::default();
+        let wirehose = mock::WirehoseHandle::default();
+
+        // 1 header line + 4 channel rows = 5 lines tall in channel mode,
+        // vs. the ordinary fixed height of 3.
+        let object_id = ObjectId::from_raw_id(1);
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Multichannel node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_media_name(String::from("Media name"));
+        props.set_node_name(String::from("multi"));
+        props.set_object_serial(1);
+        state.update(StateEvent::NodeProperties { object_id, props });
+        state.update(StateEvent::NodeVolumes {
+            object_id,
+            volumes: vec![0.0, 0.0, 0.0, 0.0],
+        });
+        state.update(StateEvent::NodeMute {
+            object_id,
+            mute: false,
+        });
+
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+
+        let spacing = NodeWidget::spacing();
+        // Room for exactly one node at the default height, but not once it
+        // expands to 5 lines tall in channel mode.
+        let full_default_height = NodeWidget::height().saturating_add(spacing);
+        // + 2 for header and footer
+        let rect = Rect::new(0, 0, 80, full_default_height + 2);
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        assert_eq!(object_list.visible_count(&view, &rect, false, false), 1);
+
+        object_list.channel_mode = true;
+        assert_eq!(object_list.visible_count(&view, &rect, false, false), 0);
+    }
+
+    #[test]
+    fn channel_mode_shrinks_visible_objects_for_lazy_capture() {
+        // lazy_capture (App::update_capturing) starts/stops peak-level
+        // capture based on ObjectList::visible_objects() - this proves
+        // that set correctly shrinks when channel mode makes a node too
+        // tall to fit, exactly mirroring visible_count() above but at the
+        // API lazy_capture actually consumes. Capture is inherently
+        // per-node (ObjectId), never per-channel-row, so no new plumbing
+        // is needed here - this is a regression guard confirming that
+        // stays true, not new production behavior.
+        let mut state = State::default();
+        let wirehose = mock::WirehoseHandle::default();
+
+        let object_id = ObjectId::from_raw_id(1);
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Multichannel node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_media_name(String::from("Media name"));
+        props.set_node_name(String::from("multi"));
+        props.set_object_serial(1);
+        state.update(StateEvent::NodeProperties { object_id, props });
+        state.update(StateEvent::NodeVolumes {
+            object_id,
+            volumes: vec![0.0, 0.0, 0.0, 0.0],
+        });
+        state.update(StateEvent::NodeMute {
+            object_id,
+            mute: false,
+        });
+
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+
+        let full_default_height =
+            NodeWidget::height().saturating_add(NodeWidget::spacing());
+        let rect = Rect::new(0, 0, 80, full_default_height + 2);
+
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+        let visible = object_list.visible_objects(&rect, &view, false, false);
+        assert!(visible.contains(&object_id));
+
+        object_list.channel_mode = true;
+        let visible = object_list.visible_objects(&rect, &view, false, false);
+        assert!(!visible.contains(&object_id));
     }
 
     #[test]

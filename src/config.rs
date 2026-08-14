@@ -51,7 +51,142 @@ pub struct Config {
     pub max_concurrent_captures: Option<usize>,
     pub max_concurrent_captures_global: Option<usize>,
     pub capture_hidden: bool,
+    /// Whether a node's volume is ever shown as more than one bar/row when
+    /// its setting is linked (ganged) - "unified" (always one) or
+    /// "always" (always split, per `split_style`). See `unified_imbalance`
+    /// for how an imbalanced node is indicated while this is "unified".
+    /// Independent of `channel_mode`, which always forces a split,
+    /// individually-cursored display regardless of this setting.
+    pub channel_display: ChannelDisplay,
+    /// Only consulted when `channel_display` is "unified": how an
+    /// imbalanced node (channels that don't all hold the same value) is
+    /// indicated without actually splitting the whole list's display.
+    pub unified_imbalance: UnifiedImbalance,
+    /// Rendering style whenever a node's volume actually is split
+    /// (`channel_display = "always"`, `unified_imbalance = "split"`
+    /// triggering for one imbalanced node, or `channel_mode` being on).
+    /// "radiating" renders a lone simple pair on one fixed-height row;
+    /// anything with more channels (extra singles alongside a pair, more
+    /// than one pair, or no pair at all) gets one row per detected
+    /// pair/channel instead, each pair still radiating on its own row.
+    pub split_style: SplitStyle,
+    /// Initial value of the "Channel mode" setting axis (linked vs
+    /// individual - see `Action::ToggleChannelMode`). Independent of
+    /// `channel_display`/`unified_imbalance`/`split_style`, which
+    /// control *display*, not which channels an adjustment affects.
+    pub channel_mode: bool,
+    /// How a radiating pair row (split_style = "radiating") labels which
+    /// physical pair it's showing - only matters once more than one row
+    /// can appear in the same node's split display (a lone pair takes
+    /// the classic unlabeled single-row fast path instead). "verbose"
+    /// spells out that it's a pair ("F L/R"); "short" is just the group
+    /// name ("F").
+    pub pair_label_style: PairLabelStyle,
+    /// Which `ChannelView`s `Action::CycleView` steps through, and in
+    /// what order - see `ChannelView`. Removing one excludes it from
+    /// cycling without disabling it entirely; it's still reachable via
+    /// `Action::SelectView`. Must be non-empty.
+    pub view_cycle: Vec<ChannelView>,
+    /// Bar/meter row layout for `Unified` view - see `MeterLayout`.
+    pub unified_meter_layout: MeterLayout,
+    /// Bar/meter row layout for `Linked` view - see `MeterLayout`.
+    pub linked_meter_layout: MeterLayout,
+    /// Bar/meter row layout for `Channels` view - see `MeterLayout`.
+    pub channels_meter_layout: MeterLayout,
+    /// Configurable, default on. A lone stereo pair's `StereoVolumeWidget`
+    /// (the classic single-row fast path - it never shows a group label
+    /// the way a multi-row block's `RadiatingRowWidget` does) shrinks its
+    /// own label area down to just what a plain `"{percent}%"` needs,
+    /// handing the rest to the volume bars - a real width increase, not
+    /// a token one, at the cost of no longer sharing a bar-start column
+    /// with `RadiatingRowWidget` rows elsewhere in the same view.
+    pub expand_unused_label_space: bool,
+    /// Opt-in, default off. An unpaired channel's row in a
+    /// `split_style = "radiating"` block normally occupies just the left
+    /// half of the row's column grid (mirroring where a paired row's own
+    /// left bar would be, so every row in the block starts/ends its bar
+    /// at the same columns) - when this is on, it stretches across the
+    /// row's full remaining width instead.
+    pub expand_unpaired_channel_bars: bool,
     pub filters: Vec<MatchCondition>,
+}
+
+/// Overrides for one view's bar/meter row layout: the percentage of a
+/// row's combined volume+meter width given to the meter side, the blank
+/// gap between them, and the blank margin reserved at the row's right
+/// edge (all once `peaks` is on - `gap`/`meter_width_percent` are moot
+/// with `peaks = "off"`, nothing to gap/split against). `meter_width_percent`
+/// left `None` (its default) reproduces stock wiremix's own proportional
+/// ratio; setting it opts that one field, for that one view, into a
+/// fixed-column override instead. `right_margin` is always a fixed
+/// column count; `gap` is a *floor* rather than a fixed override - the
+/// actual gap scales up above it with the meter side's own available
+/// width (see `effective_gap` in `node_widget.rs`), rather than staying
+/// visually cramped in a wide terminal. Both are carved out of the
+/// meter/monitor side's own share of the row, not the volume side's, so
+/// widening either never costs the volume area any width. The three
+/// fields and three views are all independent of each other. See
+/// `Config::meter_layout` for how a render picks which of the three (one
+/// per `ChannelView`) applies.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MeterLayout {
+    pub meter_width_percent: Option<f32>,
+    pub gap: u16,
+    pub right_margin: u16,
+}
+
+// This is what actually gets parsed from the config - see `MeterLayout`.
+#[derive(Deserialize, Debug, Clone, Copy)]
+#[cfg_attr(test, derive(PartialEq))]
+#[serde(deny_unknown_fields, default)]
+struct MeterLayoutFile {
+    meter_width_percent: Option<f32>,
+    #[serde(default = "default_gap")]
+    gap: u16,
+    #[serde(default = "default_right_margin")]
+    right_margin: u16,
+}
+
+// A small gap by default, carved from the meter side alone - still
+// fully overridable per view with any other fixed value, including 0.
+fn default_gap() -> u16 {
+    2
+}
+
+// About half of the default gap's own trailing counterpart - a small
+// margin by default, carved from the meter side alone - still fully
+// overridable per view with any other fixed value, including 0.
+fn default_right_margin() -> u16 {
+    3
+}
+
+impl Default for MeterLayoutFile {
+    fn default() -> Self {
+        Self {
+            meter_width_percent: None,
+            gap: default_gap(),
+            right_margin: default_right_margin(),
+        }
+    }
+}
+
+impl MeterLayoutFile {
+    fn validate(self, label: &str) -> anyhow::Result<MeterLayout> {
+        if let Some(percent) = self.meter_width_percent {
+            if !(1.0..=99.0).contains(&percent) {
+                anyhow::bail!(
+                    "{label}.meter_width_percent {percent} must be \
+                     between 1 and 99 - to hide the meter entirely, use \
+                     peaks = \"off\" instead"
+                );
+            }
+        }
+        Ok(MeterLayout {
+            meter_width_percent: self.meter_width_percent,
+            gap: self.gap,
+            right_margin: self.right_margin,
+        })
+    }
 }
 
 /// Represents a configuration deserialized from a file. This gets baked into a
@@ -108,6 +243,28 @@ struct ConfigFile {
     max_concurrent_captures_global: Option<usize>,
     #[serde(default = "default_capture_hidden")]
     capture_hidden: bool,
+    #[serde(default = "default_channel_display")]
+    channel_display: Option<ChannelDisplay>,
+    #[serde(default = "default_unified_imbalance")]
+    unified_imbalance: Option<UnifiedImbalance>,
+    #[serde(default = "default_split_style")]
+    split_style: Option<SplitStyle>,
+    #[serde(default = "default_channel_mode")]
+    channel_mode: bool,
+    #[serde(default = "default_pair_label_style")]
+    pair_label_style: Option<PairLabelStyle>,
+    #[serde(default = "default_view_cycle")]
+    view_cycle: Vec<ChannelView>,
+    #[serde(default)]
+    unified_meter_layout: MeterLayoutFile,
+    #[serde(default)]
+    linked_meter_layout: MeterLayoutFile,
+    #[serde(default)]
+    channels_meter_layout: MeterLayoutFile,
+    #[serde(default = "default_expand_unused_label_space")]
+    expand_unused_label_space: bool,
+    #[serde(default = "default_expand_unpaired_channel_bars")]
+    expand_unpaired_channel_bars: bool,
     #[serde(default = "Filter::defaults", deserialize_with = "Filter::merge")]
     filters: Vec<Filter>,
 }
@@ -119,6 +276,111 @@ pub enum Peaks {
     Mono,
     #[default]
     Auto,
+}
+
+#[derive(
+    Deserialize, Default, Debug, Clone, Copy, PartialEq, clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChannelDisplay {
+    #[default]
+    Unified,
+    Always,
+}
+
+#[derive(
+    Deserialize, Default, Debug, Clone, Copy, PartialEq, clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum UnifiedImbalance {
+    #[default]
+    None,
+    Cycle,
+    Split,
+}
+
+#[derive(
+    Deserialize, Default, Debug, Clone, Copy, PartialEq, clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum SplitStyle {
+    #[default]
+    Radiating,
+    Stacked,
+}
+
+#[derive(
+    Deserialize, Default, Debug, Clone, Copy, PartialEq, clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum PairLabelStyle {
+    #[default]
+    Verbose,
+    Short,
+}
+
+/// One of the three high-level ways the object list can display and
+/// target a node's volume - a convenience wrapper over `channel_mode`/
+/// `channel_display`, derived from them rather than stored as separate
+/// state (see `ObjectList::channel_view`), used only for `Action::
+/// SelectView`/`Action::CycleView` and `Config::view_cycle`.
+/// "unified" = `channel_mode = false`, `channel_display = "unified"`
+/// (one collapsed bar/row). "linked" = `channel_mode = false`,
+/// `channel_display = "always"` (always split, but volume keys still
+/// adjust every channel together). "channels" = `channel_mode = true`
+/// (always split, volume keys target only the cursored channel).
+#[derive(
+    Deserialize,
+    Default,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChannelView {
+    #[default]
+    Unified,
+    Linked,
+    Channels,
+}
+
+/// Bundles the independent axes that decide how a node's volume is
+/// displayed/set, so functions that need all of them (mainly
+/// `NodeWidget`/its height calculation) don't need a separate parameter
+/// per axis. `channel_mode` and `channel_display` are runtime-mutable
+/// (see `ObjectList`); `unified_imbalance`/`split_style`/
+/// `pair_label_style` currently aren't (no toggle action yet -
+/// config-only), but live here alongside the others so adding one later
+/// doesn't change this bundle's shape.
+#[derive(Debug, Clone, Copy)]
+pub struct ChannelState {
+    pub channel_mode: bool,
+    pub channel_display: ChannelDisplay,
+    pub unified_imbalance: UnifiedImbalance,
+    pub split_style: SplitStyle,
+    pub pair_label_style: PairLabelStyle,
+}
+
+impl ChannelState {
+    /// The `ChannelView` this state amounts to - see `ChannelView`'s own
+    /// doc comment for the exact mapping. Used both by `ObjectList`
+    /// (`Action::CycleView`'s notion of "current view") and by
+    /// `node_widget` (to decide whether a row should use `Unified`
+    /// view's stock-identical layout or the aligned/aggressive one
+    /// shared by `Linked`/`Channels`).
+    pub fn view(&self) -> ChannelView {
+        if self.channel_mode {
+            ChannelView::Channels
+        } else if self.channel_display == ChannelDisplay::Always {
+            ChannelView::Linked
+        } else {
+            ChannelView::Unified
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -186,6 +448,22 @@ pub struct CharSet {
     pub meter_center_left_active: String,
     pub meter_center_right_inactive: String,
     pub meter_center_right_active: String,
+    /// Monitor glyphs used whenever the active view (`ChannelView`) is
+    /// `Linked` or `Channels` rather than `Unified` - `None` means "not
+    /// configured", which falls back to the corresponding `meter_left`/
+    /// `meter_right`/`meter_center_*` field above, so a split-view
+    /// monitor gauge looks identical to `Unified`'s until a theme opts
+    /// in to something distinct. `Unified` view never consults these.
+    pub meter_split_left_inactive: Option<String>,
+    pub meter_split_left_active: Option<String>,
+    pub meter_split_left_overload: Option<String>,
+    pub meter_split_right_inactive: Option<String>,
+    pub meter_split_right_active: Option<String>,
+    pub meter_split_right_overload: Option<String>,
+    pub meter_split_center_left_inactive: Option<String>,
+    pub meter_split_center_left_active: Option<String>,
+    pub meter_split_center_right_inactive: Option<String>,
+    pub meter_split_center_right_active: Option<String>,
     pub dropdown_icon: String,
     pub dropdown_selector: String,
     pub dropdown_more: String,
@@ -216,6 +494,15 @@ pub struct Theme {
     pub meter_overload: Style,
     pub meter_center_inactive: Style,
     pub meter_center_active: Style,
+    /// Monitor colors used whenever the active view (`ChannelView`) is
+    /// `Linked` or `Channels` rather than `Unified`, same "unset falls
+    /// back to the stock meter_* field above" idea as `CharSet`'s
+    /// `meter_split_*` glyph overrides.
+    pub meter_split_inactive: Option<Style>,
+    pub meter_split_active: Option<Style>,
+    pub meter_split_overload: Option<Style>,
+    pub meter_split_center_inactive: Option<Style>,
+    pub meter_split_center_active: Option<Style>,
     pub config_device: Style,
     pub config_profile: Style,
     pub row_hidden: Style,
@@ -315,6 +602,42 @@ fn default_capture_hidden() -> bool {
 
 fn default_row_selected_extend() -> bool {
     false
+}
+
+fn default_channel_display() -> Option<ChannelDisplay> {
+    Some(ChannelDisplay::default())
+}
+
+fn default_unified_imbalance() -> Option<UnifiedImbalance> {
+    Some(UnifiedImbalance::default())
+}
+
+fn default_split_style() -> Option<SplitStyle> {
+    Some(SplitStyle::default())
+}
+
+fn default_channel_mode() -> bool {
+    false
+}
+
+fn default_expand_unused_label_space() -> bool {
+    true
+}
+
+fn default_expand_unpaired_channel_bars() -> bool {
+    false
+}
+
+fn default_pair_label_style() -> Option<PairLabelStyle> {
+    Some(PairLabelStyle::default())
+}
+
+fn default_view_cycle() -> Vec<ChannelView> {
+    vec![
+        ChannelView::Unified,
+        ChannelView::Linked,
+        ChannelView::Channels,
+    ]
 }
 
 impl ConfigFile {
@@ -418,6 +741,30 @@ impl ConfigFile {
         if opt.capture_hidden {
             self.capture_hidden = true;
         }
+
+        if let Some(channel_display) = &opt.channel_display {
+            self.channel_display = Some(*channel_display);
+        }
+
+        if let Some(unified_imbalance) = &opt.unified_imbalance {
+            self.unified_imbalance = Some(*unified_imbalance);
+        }
+
+        if let Some(split_style) = &opt.split_style {
+            self.split_style = Some(*split_style);
+        }
+
+        if opt.no_channel_mode {
+            self.channel_mode = false;
+        }
+
+        if opt.channel_mode {
+            self.channel_mode = true;
+        }
+
+        if let Some(pair_label_style) = &opt.pair_label_style {
+            self.pair_label_style = Some(*pair_label_style);
+        }
     }
 
     /// Parses `toml_str` into a `ConfigFile`, then applies `opt`'s
@@ -494,8 +841,22 @@ impl TryFrom<ConfigFile> for Config {
             }
         }
 
+        let unified_meter_layout = config_file
+            .unified_meter_layout
+            .validate("unified_meter_layout")?;
+        let linked_meter_layout = config_file
+            .linked_meter_layout
+            .validate("linked_meter_layout")?;
+        let channels_meter_layout = config_file
+            .channels_meter_layout
+            .validate("channels_meter_layout")?;
+
         if config_file.tabs.is_empty() {
             anyhow::bail!("tabs must be non-empty");
+        }
+
+        if config_file.view_cycle.is_empty() {
+            anyhow::bail!("view_cycle must be non-empty");
         }
 
         let tab = config_file
@@ -534,12 +895,36 @@ impl TryFrom<ConfigFile> for Config {
             max_concurrent_captures_global: config_file
                 .max_concurrent_captures_global,
             capture_hidden: config_file.capture_hidden,
+            channel_display: config_file.channel_display.unwrap_or_default(),
+            unified_imbalance: config_file
+                .unified_imbalance
+                .unwrap_or_default(),
+            split_style: config_file.split_style.unwrap_or_default(),
+            channel_mode: config_file.channel_mode,
+            pair_label_style: config_file.pair_label_style.unwrap_or_default(),
+            view_cycle: config_file.view_cycle,
+            unified_meter_layout,
+            linked_meter_layout,
+            channels_meter_layout,
+            expand_unused_label_space: config_file.expand_unused_label_space,
+            expand_unpaired_channel_bars: config_file
+                .expand_unpaired_channel_bars,
             filters,
         })
     }
 }
 
 impl Config {
+    /// This view's `MeterLayout` overrides - see `MeterLayout`'s own doc
+    /// comment.
+    pub fn meter_layout(&self, view: ChannelView) -> MeterLayout {
+        match view {
+            ChannelView::Unified => self.unified_meter_layout,
+            ChannelView::Linked => self.linked_meter_layout,
+            ChannelView::Channels => self.channels_meter_layout,
+        }
+    }
+
     /// Returns the configuration file path.
     pub fn default_path() -> Option<PathBuf> {
         if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
@@ -624,6 +1009,17 @@ pub mod strict {
         max_concurrent_captures: Option<usize>,
         max_concurrent_captures_global: Option<usize>,
         capture_hidden: bool,
+        channel_display: Option<ChannelDisplay>,
+        unified_imbalance: Option<UnifiedImbalance>,
+        split_style: Option<SplitStyle>,
+        channel_mode: bool,
+        pair_label_style: Option<PairLabelStyle>,
+        view_cycle: Vec<ChannelView>,
+        unified_meter_layout: MeterLayoutFile,
+        linked_meter_layout: MeterLayoutFile,
+        channels_meter_layout: MeterLayoutFile,
+        expand_unused_label_space: bool,
+        expand_unpaired_channel_bars: bool,
         filters: Vec<Filter>,
     }
 
@@ -654,6 +1050,18 @@ pub mod strict {
                 max_concurrent_captures_global: strict
                     .max_concurrent_captures_global,
                 capture_hidden: strict.capture_hidden,
+                channel_display: strict.channel_display,
+                unified_imbalance: strict.unified_imbalance,
+                split_style: strict.split_style,
+                channel_mode: strict.channel_mode,
+                pair_label_style: strict.pair_label_style,
+                view_cycle: strict.view_cycle,
+                unified_meter_layout: strict.unified_meter_layout,
+                linked_meter_layout: strict.linked_meter_layout,
+                channels_meter_layout: strict.channels_meter_layout,
+                expand_unused_label_space: strict.expand_unused_label_space,
+                expand_unpaired_channel_bars: strict
+                    .expand_unpaired_channel_bars,
                 filters: strict.filters,
             }
         }
@@ -734,6 +1142,92 @@ mod tests {
     fn unknown_field_names_errors_by_default() {
         let config = "[names]\nunknown = \"unknown\"";
         assert!(ConfigFile::parse(config, &Opt::default()).is_err());
+    }
+
+    #[test]
+    fn keybinding_channel_absolute_volume() {
+        let config = r#"
+        key = { Char = "1" }
+        action = { SetChannelAbsoluteVolume = [0, 0.50] }
+        "#;
+        let keybinding: Keybinding = toml::from_str(config).unwrap();
+        assert_eq!(
+            keybinding.action,
+            Action::SetChannelAbsoluteVolume(0, 0.50)
+        );
+    }
+
+    #[test]
+    fn keybinding_channel_relative_volume() {
+        let config = r#"
+        key = { Char = "2" }
+        action = { SetChannelRelativeVolume = [1, 0.01] }
+        "#;
+        let keybinding: Keybinding = toml::from_str(config).unwrap();
+        assert_eq!(
+            keybinding.action,
+            Action::SetChannelRelativeVolume(1, 0.01)
+        );
+    }
+
+    #[test]
+    fn keybinding_toggle_channel_mode() {
+        let config = r#"
+        key = { Char = " " }
+        action = "ToggleChannelMode"
+        "#;
+        let keybinding: Keybinding = toml::from_str(config).unwrap();
+        assert_eq!(keybinding.action, Action::ToggleChannelMode);
+    }
+
+    #[test]
+    fn keybinding_cycle_channel_display() {
+        let config = r#"
+        key = { Char = "v" }
+        action = "CycleChannelDisplay"
+        "#;
+        let keybinding: Keybinding = toml::from_str(config).unwrap();
+        assert_eq!(keybinding.action, Action::CycleChannelDisplay);
+    }
+
+    #[test]
+    fn channel_display_parses_from_toml() {
+        let config: ConfigFile =
+            toml::from_str("channel_display = \"always\"").unwrap();
+        assert_eq!(config.channel_display, Some(ChannelDisplay::Always));
+    }
+
+    #[test]
+    fn unified_imbalance_parses_from_toml() {
+        let config: ConfigFile =
+            toml::from_str("unified_imbalance = \"cycle\"").unwrap();
+        assert_eq!(config.unified_imbalance, Some(UnifiedImbalance::Cycle));
+    }
+
+    #[test]
+    fn split_style_parses_from_toml() {
+        let config: ConfigFile =
+            toml::from_str("split_style = \"stacked\"").unwrap();
+        assert_eq!(config.split_style, Some(SplitStyle::Stacked));
+    }
+
+    #[test]
+    fn channel_mode_parses_from_toml() {
+        let config: ConfigFile = toml::from_str("channel_mode = true").unwrap();
+        assert!(config.channel_mode);
+    }
+
+    #[test]
+    fn pair_label_style_parses_from_toml() {
+        let config: ConfigFile =
+            toml::from_str("pair_label_style = \"short\"").unwrap();
+        assert_eq!(config.pair_label_style, Some(PairLabelStyle::Short));
+    }
+
+    #[test]
+    fn pair_label_style_defaults_to_verbose() {
+        let config = Config::from_toml_str("");
+        assert_eq!(config.pair_label_style, PairLabelStyle::Verbose);
     }
 
     #[test]
@@ -896,6 +1390,96 @@ mod tests {
         "#;
         let config_file: ConfigFile = toml::from_str(config).unwrap();
         assert!(Config::try_from(config_file).is_err());
+    }
+
+    #[test]
+    fn meter_layout_percent_out_of_range_is_error() {
+        let too_low: ConfigFile =
+            toml::from_str("[linked_meter_layout]\nmeter_width_percent = 0.0")
+                .unwrap();
+        assert!(Config::try_from(too_low).is_err());
+
+        let too_high: ConfigFile = toml::from_str(
+            "[channels_meter_layout]\nmeter_width_percent = 100.0",
+        )
+        .unwrap();
+        assert!(Config::try_from(too_high).is_err());
+    }
+
+    #[test]
+    fn view_cycle_defaults_to_all_three_and_is_configurable() {
+        let default = Config::from_toml_str("");
+        assert_eq!(
+            default.view_cycle,
+            vec![
+                ChannelView::Unified,
+                ChannelView::Linked,
+                ChannelView::Channels
+            ]
+        );
+
+        let configured =
+            Config::from_toml_str("view_cycle = [\"linked\", \"channels\"]");
+        assert_eq!(
+            configured.view_cycle,
+            vec![ChannelView::Linked, ChannelView::Channels]
+        );
+    }
+
+    #[test]
+    fn view_cycle_empty_is_error() {
+        let config_file: ConfigFile =
+            toml::from_str("view_cycle = []").unwrap();
+        assert!(Config::try_from(config_file).is_err());
+    }
+
+    #[test]
+    fn meter_layout_defaults_to_small_gap_and_margin_and_is_configurable_per_view(
+    ) {
+        // meter_width_percent stays unset by default (reproduces stock's
+        // own proportional ratio); gap/right_margin default to small
+        // fixed values (see default_gap/default_right_margin) rather
+        // than stock's wider proportional ones, universally across all
+        // three views.
+        let stock_default = MeterLayout {
+            meter_width_percent: None,
+            gap: 2,
+            right_margin: 3,
+        };
+        let default = Config::from_toml_str("");
+        assert_eq!(default.meter_layout(ChannelView::Unified), stock_default);
+        assert_eq!(default.meter_layout(ChannelView::Linked), stock_default);
+        assert_eq!(default.meter_layout(ChannelView::Channels), stock_default);
+
+        let configured = Config::from_toml_str(
+            "[linked_meter_layout]\n\
+             meter_width_percent = 30.0\n\
+             right_margin = 4\n\
+             [channels_meter_layout]\n\
+             gap = 5",
+        );
+        assert_eq!(
+            configured.meter_layout(ChannelView::Unified),
+            stock_default,
+            "unified_meter_layout wasn't touched, must stay on its \
+             (small-gap/margin) defaults"
+        );
+        assert_eq!(
+            configured.meter_layout(ChannelView::Linked),
+            MeterLayout {
+                meter_width_percent: Some(30.0),
+                gap: 2,
+                right_margin: 4,
+            }
+        );
+        assert_eq!(
+            configured.meter_layout(ChannelView::Channels),
+            MeterLayout {
+                meter_width_percent: None,
+                gap: 5,
+                right_margin: 3,
+            }
+        );
     }
 
     #[test]

@@ -72,6 +72,7 @@ impl Keybinding {
             (event(KeyCode::Char('0')), Action::SetAbsoluteVolume(1.00)),
             (event(KeyCode::Char('?')), Action::Help),
             (event(KeyCode::Char('z')), Action::ToggleCompactLayout),
+            (event(KeyCode::Char(' ')), Action::CycleView),
         ])
     }
 

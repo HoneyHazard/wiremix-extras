@@ -2,10 +2,11 @@
 
 use ratatui::{
     prelude::{Alignment, Buffer, Constraint, Direction, Layout, Rect, Widget},
+    style::Style,
     text::{Line, Span},
 };
 
-use crate::config::Config;
+use crate::config::{ChannelView, Config};
 
 /// Sizes (in characters) of each zone of a rendered peak meter, from the
 /// live/center marker outward: `active` and `overload` are lit (the
@@ -70,11 +71,100 @@ fn render_peak(peak: f32, area: Rect) -> PeakSizes {
     }
 }
 
-pub fn render_stereo(
+/// One side's (or mono gauge's) inactive/active/overload glyphs, resolved
+/// to whichever concrete characters should actually be drawn - either the
+/// stock `meter_left`/`meter_right` ones (`Unified` view), or the
+/// `meter_split_*` fields (`Linked`/`Channels` view), themselves falling
+/// back to the stock glyph wherever a theme hasn't set them.
+struct MeterChars<'a> {
+    inactive: &'a str,
+    active: &'a str,
+    overload: &'a str,
+    inactive_overload: &'a str,
+}
+
+/// One side's (or mono gauge's) inactive/active/overload colors, resolved
+/// the same way as [`MeterChars`] - stock `meter_*` `Style`s in `Unified`
+/// view, or `meter_split_*` in `Linked`/`Channels`, themselves falling
+/// back to the stock `Style` wherever a theme hasn't set them.
+#[derive(Clone, Copy)]
+struct MeterStyle {
+    inactive: Style,
+    active: Style,
+    overload: Style,
+    inactive_overload: Style,
+}
+
+/// A side's (or mono gauge's) glyphs and colors together - bundled so
+/// `render_stereo_core`/`render_mono_core` take one argument per side
+/// instead of two.
+struct MeterSide<'a> {
+    chars: MeterChars<'a>,
+    style: MeterStyle,
+}
+
+/// The two-char "live" indicator's resolved colors, active and inactive.
+#[derive(Clone, Copy)]
+struct CenterStyle {
+    inactive: Style,
+    active: Style,
+}
+
+fn render_side(
+    area: Rect,
+    buf: &mut Buffer,
+    peak: f32,
+    side: &MeterSide,
+    alignment: Alignment,
+) {
+    let sizes = render_peak(peak, area);
+
+    let inactive = Span::styled(
+        side.chars.inactive.repeat(sizes.inactive),
+        side.style.inactive,
+    );
+    let overload = Span::styled(
+        side.chars.overload.repeat(sizes.overload),
+        side.style.overload,
+    );
+    let active =
+        Span::styled(side.chars.active.repeat(sizes.active), side.style.active);
+    let inactive_overload = Span::styled(
+        side.chars.inactive_overload.repeat(sizes.inactive_overload),
+        side.style.inactive_overload,
+    );
+
+    let spans = match alignment {
+        // Left side: filled portion sits adjacent to the center marker (the
+        // bar's own right edge) and grows outward, away from center. The
+        // overload-zone preview sits at the far/outer edge, like a
+        // physical VU meter's permanent red-zone marking.
+        Alignment::Right => vec![inactive_overload, inactive, overload, active],
+        // Right side (and mono): mirror image - filled adjacent to center,
+        // growing outward to the right, overload preview at the far edge.
+        _ => vec![active, overload, inactive, inactive_overload],
+    };
+
+    Line::from(spans).alignment(alignment).render(area, buf);
+}
+
+/// The two-char "live" indicator between a stereo gauge's left and right
+/// halves, and its resolved colors.
+struct StereoCenter<'a> {
+    left_inactive: &'a str,
+    left_active: &'a str,
+    right_inactive: &'a str,
+    right_active: &'a str,
+    style: CenterStyle,
+}
+
+fn render_stereo_core(
     meter_area: Rect,
     buf: &mut Buffer,
     peaks: Option<(f32, f32)>,
-    config: &Config,
+    left: MeterSide,
+    right: MeterSide,
+    center: StereoCenter,
 ) {
     let layout = Layout::default()
         .direction(Direction::Horizontal)
@@ -91,84 +181,37 @@ pub fn render_stereo(
 
     let (left_peak, right_peak) = peaks.unwrap_or_default();
 
-    let area = meter_left;
-    let sizes = render_peak(left_peak, area);
-    Line::from(vec![
-        Span::styled(
-            config
-                .char_set
-                .meter_left_inactive_overload
-                .repeat(sizes.inactive_overload),
-            config.theme.meter_inactive_overload,
-        ),
-        Span::styled(
-            config.char_set.meter_left_inactive.repeat(sizes.inactive),
-            config.theme.meter_inactive,
-        ),
-        Span::styled(
-            config.char_set.meter_left_overload.repeat(sizes.overload),
-            config.theme.meter_overload,
-        ),
-        Span::styled(
-            config.char_set.meter_left_active.repeat(sizes.active),
-            config.theme.meter_active,
-        ),
-    ])
-    .alignment(Alignment::Right)
-    .render(area, buf);
-
-    let area = meter_right;
-    let sizes = render_peak(right_peak, area);
-    Line::from(vec![
-        Span::styled(
-            config.char_set.meter_right_active.repeat(sizes.active),
-            config.theme.meter_active,
-        ),
-        Span::styled(
-            config.char_set.meter_right_overload.repeat(sizes.overload),
-            config.theme.meter_overload,
-        ),
-        Span::styled(
-            config.char_set.meter_right_inactive.repeat(sizes.inactive),
-            config.theme.meter_inactive,
-        ),
-        Span::styled(
-            config
-                .char_set
-                .meter_right_inactive_overload
-                .repeat(sizes.inactive_overload),
-            config.theme.meter_inactive_overload,
-        ),
-    ])
-    .render(area, buf);
+    render_side(meter_left, buf, left_peak, &left, Alignment::Right);
+    render_side(meter_right, buf, right_peak, &right, Alignment::Left);
 
     let live_line = if peaks.is_some() {
         Line::from(Span::styled(
-            format!(
-                "{}{}",
-                config.char_set.meter_center_left_active,
-                config.char_set.meter_center_right_active,
-            ),
-            config.theme.meter_center_active,
+            format!("{}{}", center.left_active, center.right_active),
+            center.style.active,
         ))
     } else {
         Line::from(Span::styled(
-            format!(
-                "{}{}",
-                config.char_set.meter_center_left_inactive,
-                config.char_set.meter_center_right_inactive
-            ),
-            config.theme.meter_center_inactive,
+            format!("{}{}", center.left_inactive, center.right_inactive),
+            center.style.inactive,
         ))
     };
     live_line.render(meter_live, buf);
 }
 
-pub fn render_mono(
+/// The single-char "live" indicator for a mono gauge, and its resolved
+/// colors.
+struct MonoCenter<'a> {
+    inactive: &'a str,
+    active: &'a str,
+    style: CenterStyle,
+}
+
+fn render_mono_core(
     meter_area: Rect,
     buf: &mut Buffer,
     peak: Option<f32>,
-    config: &Config,
+    mono: MeterSide,
+    center: MonoCenter,
 ) {
     let mono_peak = peak.unwrap_or_default();
 
@@ -183,43 +226,249 @@ pub fn render_mono(
     let meter_live = layout[0];
     let meter_mono = layout[1];
 
-    let area = meter_mono;
-    let sizes = render_peak(mono_peak, area);
-    Line::from(vec![
-        Span::styled(
-            config.char_set.meter_right_active.repeat(sizes.active),
-            config.theme.meter_active,
-        ),
-        Span::styled(
-            config.char_set.meter_right_overload.repeat(sizes.overload),
-            config.theme.meter_overload,
-        ),
-        Span::styled(
-            config.char_set.meter_right_inactive.repeat(sizes.inactive),
-            config.theme.meter_inactive,
-        ),
-        Span::styled(
-            config
-                .char_set
-                .meter_right_inactive_overload
-                .repeat(sizes.inactive_overload),
-            config.theme.meter_inactive_overload,
-        ),
-    ])
-    .render(area, buf);
+    render_side(meter_mono, buf, mono_peak, &mono, Alignment::Left);
 
     let live_line = if peak.is_some() {
-        Line::from(Span::styled(
-            &config.char_set.meter_center_right_active,
-            config.theme.meter_center_active,
-        ))
+        Line::from(Span::styled(center.active, center.style.active))
     } else {
-        Line::from(Span::styled(
-            &config.char_set.meter_center_right_inactive,
-            config.theme.meter_center_inactive,
-        ))
+        Line::from(Span::styled(center.inactive, center.style.inactive))
     };
     live_line.render(meter_live, buf);
+}
+
+/// Renders a stereo (left/right) peak meter. `view` selects which glyphs/
+/// colors apply: `Unified` always uses the stock `meter_left`/
+/// `meter_right`/`meter_center_*` fields; `Linked`/`Channels` use the
+/// `meter_split_*` fields instead, each falling back to its stock
+/// counterpart wherever a theme hasn't set it - so a theme that hasn't
+/// opted in to a distinct split-view look renders identically to
+/// `Unified`. The `inactive_overload` zone-preview glyph/color (see
+/// [`PeakSizes`]) is shared across every view - there's no
+/// `meter_split_inactive_overload` counterpart, since the boundary it
+/// marks doesn't change with the view.
+pub fn render_stereo(
+    meter_area: Rect,
+    buf: &mut Buffer,
+    peaks: Option<(f32, f32)>,
+    config: &Config,
+    view: ChannelView,
+) {
+    let cs = &config.char_set;
+    let theme = &config.theme;
+    let split = view != ChannelView::Unified;
+
+    let style = if split {
+        MeterStyle {
+            inactive: theme
+                .meter_split_inactive
+                .unwrap_or(theme.meter_inactive),
+            active: theme.meter_split_active.unwrap_or(theme.meter_active),
+            overload: theme
+                .meter_split_overload
+                .unwrap_or(theme.meter_overload),
+            inactive_overload: theme.meter_inactive_overload,
+        }
+    } else {
+        MeterStyle {
+            inactive: theme.meter_inactive,
+            active: theme.meter_active,
+            overload: theme.meter_overload,
+            inactive_overload: theme.meter_inactive_overload,
+        }
+    };
+
+    let left = if split {
+        MeterChars {
+            inactive: cs
+                .meter_split_left_inactive
+                .as_deref()
+                .unwrap_or(&cs.meter_left_inactive),
+            active: cs
+                .meter_split_left_active
+                .as_deref()
+                .unwrap_or(&cs.meter_left_active),
+            overload: cs
+                .meter_split_left_overload
+                .as_deref()
+                .unwrap_or(&cs.meter_left_overload),
+            inactive_overload: &cs.meter_left_inactive_overload,
+        }
+    } else {
+        MeterChars {
+            inactive: &cs.meter_left_inactive,
+            active: &cs.meter_left_active,
+            overload: &cs.meter_left_overload,
+            inactive_overload: &cs.meter_left_inactive_overload,
+        }
+    };
+
+    let right = if split {
+        MeterChars {
+            inactive: cs
+                .meter_split_right_inactive
+                .as_deref()
+                .unwrap_or(&cs.meter_right_inactive),
+            active: cs
+                .meter_split_right_active
+                .as_deref()
+                .unwrap_or(&cs.meter_right_active),
+            overload: cs
+                .meter_split_right_overload
+                .as_deref()
+                .unwrap_or(&cs.meter_right_overload),
+            inactive_overload: &cs.meter_right_inactive_overload,
+        }
+    } else {
+        MeterChars {
+            inactive: &cs.meter_right_inactive,
+            active: &cs.meter_right_active,
+            overload: &cs.meter_right_overload,
+            inactive_overload: &cs.meter_right_inactive_overload,
+        }
+    };
+
+    let center = if split {
+        StereoCenter {
+            left_inactive: cs
+                .meter_split_center_left_inactive
+                .as_deref()
+                .unwrap_or(&cs.meter_center_left_inactive),
+            left_active: cs
+                .meter_split_center_left_active
+                .as_deref()
+                .unwrap_or(&cs.meter_center_left_active),
+            right_inactive: cs
+                .meter_split_center_right_inactive
+                .as_deref()
+                .unwrap_or(&cs.meter_center_right_inactive),
+            right_active: cs
+                .meter_split_center_right_active
+                .as_deref()
+                .unwrap_or(&cs.meter_center_right_active),
+            style: CenterStyle {
+                inactive: theme
+                    .meter_split_center_inactive
+                    .unwrap_or(theme.meter_center_inactive),
+                active: theme
+                    .meter_split_center_active
+                    .unwrap_or(theme.meter_center_active),
+            },
+        }
+    } else {
+        StereoCenter {
+            left_inactive: &cs.meter_center_left_inactive,
+            left_active: &cs.meter_center_left_active,
+            right_inactive: &cs.meter_center_right_inactive,
+            right_active: &cs.meter_center_right_active,
+            style: CenterStyle {
+                inactive: theme.meter_center_inactive,
+                active: theme.meter_center_active,
+            },
+        }
+    };
+
+    render_stereo_core(
+        meter_area,
+        buf,
+        peaks,
+        MeterSide { chars: left, style },
+        MeterSide {
+            chars: right,
+            style,
+        },
+        center,
+    );
+}
+
+/// Renders a mono (single-channel) peak meter - see [`render_stereo`] for
+/// how `view` selects between stock and `meter_split_*` glyphs/colors.
+pub fn render_mono(
+    meter_area: Rect,
+    buf: &mut Buffer,
+    peak: Option<f32>,
+    config: &Config,
+    view: ChannelView,
+) {
+    let cs = &config.char_set;
+    let theme = &config.theme;
+    let split = view != ChannelView::Unified;
+
+    let mono = if split {
+        MeterSide {
+            chars: MeterChars {
+                inactive: cs
+                    .meter_split_right_inactive
+                    .as_deref()
+                    .unwrap_or(&cs.meter_right_inactive),
+                active: cs
+                    .meter_split_right_active
+                    .as_deref()
+                    .unwrap_or(&cs.meter_right_active),
+                overload: cs
+                    .meter_split_right_overload
+                    .as_deref()
+                    .unwrap_or(&cs.meter_right_overload),
+                inactive_overload: &cs.meter_right_inactive_overload,
+            },
+            style: MeterStyle {
+                inactive: theme
+                    .meter_split_inactive
+                    .unwrap_or(theme.meter_inactive),
+                active: theme.meter_split_active.unwrap_or(theme.meter_active),
+                overload: theme
+                    .meter_split_overload
+                    .unwrap_or(theme.meter_overload),
+                inactive_overload: theme.meter_inactive_overload,
+            },
+        }
+    } else {
+        MeterSide {
+            chars: MeterChars {
+                inactive: &cs.meter_right_inactive,
+                active: &cs.meter_right_active,
+                overload: &cs.meter_right_overload,
+                inactive_overload: &cs.meter_right_inactive_overload,
+            },
+            style: MeterStyle {
+                inactive: theme.meter_inactive,
+                active: theme.meter_active,
+                overload: theme.meter_overload,
+                inactive_overload: theme.meter_inactive_overload,
+            },
+        }
+    };
+
+    let center = if split {
+        MonoCenter {
+            inactive: cs
+                .meter_split_center_right_inactive
+                .as_deref()
+                .unwrap_or(&cs.meter_center_right_inactive),
+            active: cs
+                .meter_split_center_right_active
+                .as_deref()
+                .unwrap_or(&cs.meter_center_right_active),
+            style: CenterStyle {
+                inactive: theme
+                    .meter_split_center_inactive
+                    .unwrap_or(theme.meter_center_inactive),
+                active: theme
+                    .meter_split_center_active
+                    .unwrap_or(theme.meter_center_active),
+            },
+        }
+    } else {
+        MonoCenter {
+            inactive: &cs.meter_center_right_inactive,
+            active: &cs.meter_center_right_active,
+            style: CenterStyle {
+                inactive: theme.meter_center_inactive,
+                active: theme.meter_center_active,
+            },
+        }
+    };
+
+    render_mono_core(meter_area, buf, peak, mono, center);
 }
 
 #[cfg(test)]

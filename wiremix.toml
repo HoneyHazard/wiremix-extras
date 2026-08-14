@@ -107,6 +107,94 @@ lenient_config = false
 # monitoring rules as regular ones.
 capture_hidden = true
 
+# Whether a node's volume is ever shown as more than one bar/row when its
+# setting is linked/ganged (see channel_mode below for the individual
+# setting axis, which is independent of this):
+# "unified" - always exactly one bar/row (today's default). See
+#   unified_imbalance below for how a node whose channels currently hold
+#   different values is indicated while collapsed like this.
+# "always" - always split (see split_style), never collapses to one
+#   bar/row.
+# Toggle live with the "ToggleChannelDisplay" action (unbound by
+# default) - cycles unified -> always -> unified.
+channel_display = "unified"
+
+# Only consulted when channel_display = "unified" - how a node whose
+# channels currently hold different values is indicated without actually
+# switching the whole session to "always":
+# "none" - no indication, just the mean (today's default, and the only
+#   behavior stock wiremix has ever had).
+# "cycle" - stay collapsed to one bar/row, but temporally cycle the
+#   bar+percentage through each channel's own value in turn while they
+#   differ (labeled with the channel's raw index, not its name - "0 79%",
+#   not "FL 79%"). Fixed 1.5s interval for now, not yet configurable.
+# "split" - just that one imbalanced node renders split (see
+#   split_style) while every other, balanced node stays collapsed to one
+#   bar/row.
+unified_imbalance = "none"
+
+# Rendering style whenever a node's volume actually is split
+# (channel_display = "always", unified_imbalance = "split" triggering for
+# a currently-imbalanced node, or channel_mode = true - see below):
+# "radiating" - a node with exactly one simple stereo (or other named
+#   left/right) pair and nothing else gets a single row with two bars
+#   growing outward from a shared center marker. A node with more going
+#   on (extra channels alongside a pair, more than one pair, e.g. a 5.1/
+#   7.1 device, or no pair at all) instead gets one row per detected
+#   pair/channel - a pair still radiates from a center marker on its own
+#   row (labeled with its group name - see pair_label_style below), and
+#   an unpaired channel occupies just the left half of that same column
+#   layout (its own label/percentage/bar, with the divider and right
+#   side left blank) so every row's bar starts and ends at the same
+#   columns and represents the same volume-to-character scale.
+# "stacked" - one row per channel, always, regardless of any pairing.
+split_style = "radiating"
+
+# Only consulted when split_style = "radiating" and more than one row
+# ends up in the same node's split display (see split_style above) - a
+# lone pair takes the single-row fast path above and never needs a
+# label. How a radiating pair row's group label is formatted:
+# "verbose" - spells out that it's a pair, e.g. "F L|R" for the FL/FR
+#   pair, "R L|R" for RL/RR (today's default).
+# "short" - just the group name, e.g. "F", "R".
+pair_label_style = "verbose"
+
+# Which of the three high-level views ("unified" - one collapsed bar/row,
+# channel_mode = false, channel_display = "unified"; "linked" - always
+# split but volume keys still adjust every channel together, channel_mode
+# = false, channel_display = "always"; "channels" - always split, volume
+# keys target only the cursored channel, channel_mode = true)
+# Action::CycleView steps through, and in what order. Removing one
+# excludes it from cycling without disabling it entirely - it's still
+# reachable directly via Action::SelectView. Must be non-empty.
+view_cycle = [ "unified", "linked", "channels" ]
+
+# Whether volume keys (h/l, Left/Right, 0-9, etc.) adjust every channel
+# of the selected item together (false, linked/ganged - today's default)
+# or only the individually-cursored channel (true, "Channel mode").
+# Independent of channel_display/unified_imbalance/split_style, which
+# control *display*, not which channels an adjustment affects - though
+# channel_mode = true always renders split (stacked), regardless of
+# those settings. Toggle live with the "ToggleChannelMode" action
+# (unbound by default - Space is bound to "CycleView" instead, the
+# higher-level action this and channel_display are both folded into,
+# see the Keybindings section below).
+channel_mode = false
+
+# A lone stereo pair's row never shows a group label at all (unlike a
+# multi-row block's own rows) - shrink its label area down to just what
+# a plain percentage needs and hand the rest to the volume bars. Costs
+# it a shared bar-start column with any multi-row block rows elsewhere
+# in the same view. On by default.
+expand_unused_label_space = true
+
+# An unpaired channel's row in a split_style = "radiating" block
+# normally occupies just the left half of the row (mirroring where a
+# paired row's own left bar would be, so every row in the block lines
+# up); when this is on, it stretches across the row's full remaining
+# width instead. Opt-in, off by default.
+expand_unpaired_channel_bars = false
+
 
 # Keybindings
 #
@@ -207,9 +295,88 @@ keybindings = [
  { key = { F = 3 }, action = { SelectTab = 2 } },
  { key = { F = 4 }, action = { SelectTab = 3 } },
  { key = { F = 5 }, action = { SelectTab = 4 } },
- # "Nothing" is an action with no default binding - it can be used to
- # effectively delete a default keybinding by rebinding its key to it
+ # Step to the next of the three views in view_cycle (see the Main
+ # Options section above) - "unified" (one collapsed bar/row) ->
+ # "linked" (always split, volume keys still adjust every channel
+ # together) -> "channels" (always split, volume keys target only the
+ # cursored channel) -> back to "unified".
+ { key = { Char = " " }, action = "CycleView" },
+ # There are seven actions which don't have default bindings:
+ # 1. "Nothing": Do nothing - can effectively delete a default keybinding
+ # 2. { SelectTab = N }: Open the Nth tab
+ # 3. { SetChannelAbsoluteVolume = [N, volume] }: Set the volume of just
+ #    channel N (an index into the selected item's own channels) to
+ #    `volume`, leaving every other channel alone
+ # 4. { SetChannelRelativeVolume = [N, delta] }: Adjust the volume of just
+ #    channel N by `delta`, relative to its own current value
+ # 5. { SelectView = "unified"|"linked"|"channels" }: Jump directly to one
+ #    of the three views "CycleView" above steps through, regardless of
+ #    view_cycle - e.g. a dedicated key straight to "channels" without
+ #    cycling through "linked" first
+ # 6. "ToggleChannelMode"/"CycleChannelDisplay": The two lower-level axes
+ #    "CycleView"/"SelectView" are built from - toggling "Channel mode"
+ #    (individual per-channel targeting) and cycling channel_display
+ #    (unified/always) independently, for anyone who wants that two-axis
+ #    control instead of three named views
+ #
+ # For example, to control the two channels of a stereo pair
+ # independently with Ctrl+Left/Right (channel 0) and Ctrl+Up/Down
+ # (channel 1), and jump straight to Channel mode with Ctrl+Space:
+ #
+ # { key = "Left", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [0, -0.01] } },
+ # { key = "Right", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [0, 0.01] } },
+ # { key = "Up", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [1, 0.01] } },
+ # { key = "Down", modifiers = "CONTROL", action = { SetChannelRelativeVolume = [1, -0.01] } },
+ # { key = { Char = " " }, modifiers = "CONTROL", action = { SelectView = "channels" } },
+ #
+ # Ctrl+arrow keys aren't guaranteed to reach wiremix on every terminal -
+ # some terminal emulators and multiplexers (tmux, screen) intercept them
+ # first for their own tab/pane/word-jump bindings. Pick different keys
+ # if these don't seem to work in your setup.
 ]
+
+
+# Meter Layout
+#
+# Per-view override for how a bar/meter row lays out its volume area,
+# meter area (once peaks isn't "off"), and the blank columns around
+# them - independently configurable per view (see view_cycle above).
+# meter_width_percent left unset (its default for all three views)
+# reproduces stock wiremix's own proportional ratio, so out of the box
+# every view's ratio closely matches classic wiremix. Fields are
+# independent - e.g. you can pin just channels_meter_layout's
+# right_margin while leaving its ratio on its classic, proportional
+# default.
+#
+# meter_width_percent - percentage of the row's combined volume+meter
+#   width given to the meter side (the volume side gets the rest). Must
+#   be between 1 and 99 if set; to hide the meter entirely, use
+#   peaks = "off" instead. Applied before gap/right_margin, so widening
+#   either of those never costs the volume side any width.
+# gap - minimum blank columns between the volume area and the meter
+#   area, carved out of the meter side alone. Small by default (2,
+#   universally across all three views, still overridable per view) -
+#   this is a floor, not a fixed amount: the actual gap scales up above
+#   it as the meter side gets more available width, rather than staying
+#   visually cramped in a wide terminal.
+# right_margin - blank columns reserved at the row's right edge, also
+#   carved out of the meter side alone. A fixed amount (unlike gap, this
+#   one doesn't scale) - small by default (3), universally across all
+#   three views - still fully overridable per view, including to 0.
+[unified_meter_layout]
+#meter_width_percent = 50.0
+gap = 2
+right_margin = 3
+
+[linked_meter_layout]
+#meter_width_percent = 50.0
+gap = 2
+right_margin = 3
+
+[channels_meter_layout]
+#meter_width_percent = 50.0
+gap = 2
+right_margin = 3
 
 
 # Names
@@ -428,6 +595,16 @@ meter_inactive_overload = { fg = "DarkGray" }
 # The "live" indicator in the center of the meter
 meter_center_inactive = { fg = "DarkGray" }
 meter_center_active = { fg = "LightGreen" }
+# Peak meter colors used instead of the meter_*/meter_center_* colors above
+# whenever the active view is "linked" or "channels" rather than "unified"
+# (see view_cycle). Unset (the default) falls back to the meter_*/
+# meter_center_* color above, so a theme that hasn't opted in to a distinct
+# look for linked/channels view renders identically to "unified".
+# meter_split_inactive = { fg = "DarkGray" }
+# meter_split_active = { fg = "LightGreen" }
+# meter_split_overload = { fg = "Red" }
+# meter_split_center_inactive = { fg = "DarkGray" }
+# meter_split_center_active = { fg = "LightGreen" }
 # The name of a device in the Configuration tab
 config_device = { }
 # The name of the selected profile in the Configuration tab
@@ -557,6 +734,23 @@ meter_center_left_inactive = "▮"
 meter_center_left_active = "▮"
 meter_center_right_inactive = "▮"
 meter_center_right_active = "▮"
+# Peak meter glyphs used instead of the meter_*/meter_center_* glyphs above
+# whenever the active view is "linked" or "channels" rather than "unified"
+# (see view_cycle) - lets a split/per-channel meter look visually distinct
+# from a whole node's own "unified" meter. Unset falls back to the
+# meter_*/meter_center_* glyph above, so a char_set that hasn't opted in to
+# a distinct look for linked/channels view renders identically to
+# "unified". Mono meters use only the right/center_right side.
+meter_split_left_inactive = "❘"
+meter_split_left_active = "❘"
+meter_split_left_overload = "❘"
+meter_split_right_inactive = "❘"
+meter_split_right_active = "❘"
+meter_split_right_overload = "❘"
+meter_split_center_left_inactive = "▇"
+meter_split_center_left_active = "▇"
+meter_split_center_right_inactive = "▇"
+meter_split_center_right_active = "▇"
 # Dropdown marker next to the profiles in the Configuration tab
 dropdown_icon = "▼"
 # Indicates the selected item in a dropdown
@@ -599,6 +793,11 @@ meter_overload = { add_modifier = "BOLD" }
 meter_inactive_overload = { add_modifier = "DIM" }
 meter_center_inactive = { add_modifier = "DIM" }
 meter_center_active = { add_modifier = "BOLD" }
+# meter_split_inactive = { add_modifier = "DIM" }
+# meter_split_active = { add_modifier = "BOLD" }
+# meter_split_overload = { add_modifier = "BOLD" }
+# meter_split_center_inactive = { add_modifier = "DIM" }
+# meter_split_center_active = { add_modifier = "BOLD" }
 config_device = { }
 config_profile = { }
 row_hidden = { add_modifier = "DIM" }
@@ -633,6 +832,11 @@ meter_overload = { }
 meter_inactive_overload = { }
 meter_center_inactive = { }
 meter_center_active = { }
+# meter_split_inactive = { }
+# meter_split_active = { }
+# meter_split_overload = { }
+# meter_split_center_inactive = { }
+# meter_split_center_active = { }
 config_device = { }
 config_profile = { }
 row_hidden = { }
@@ -679,6 +883,16 @@ meter_center_left_inactive = "█"
 meter_center_left_active = "█"
 meter_center_right_inactive = "█"
 meter_center_right_active = "█"
+meter_split_left_inactive = "❘"
+meter_split_left_active = "❘"
+meter_split_left_overload = "❘"
+meter_split_right_inactive = "❘"
+meter_split_right_active = "❘"
+meter_split_right_overload = "❘"
+meter_split_center_left_inactive = "▇"
+meter_split_center_left_active = "▇"
+meter_split_center_right_inactive = "▇"
+meter_split_center_right_active = "▇"
 dropdown_icon = "▼"
 dropdown_selector = ">"
 dropdown_more = "•••"
@@ -687,6 +901,11 @@ help_more = "•••"
 help_border = "Plain"
 
 [char_sets.extracompat]
+# Explicit inherit (unlike default/compat above) so the commented-out
+# meter_split_* lines below correctly reflect this char_set's own None
+# default, rather than falling back to [char_sets.default]'s Some("❘")/
+# Some("▇").
+inherit = "extracompat"
 default_device = "*"
 default_stream = "*"
 hidden_instance = "[hide] "
@@ -712,6 +931,19 @@ meter_center_left_inactive = "["
 meter_center_left_active = "["
 meter_center_right_inactive = "]"
 meter_center_right_active = "]"
+# extracompat stays unset (ASCII-only, works-everywhere) here, unlike
+# default/compat above - it keeps falling back to the classic meter_*/
+# meter_center_* glyphs above in every view.
+# meter_split_left_inactive = "="
+# meter_split_left_active = "#"
+# meter_split_left_overload = "!"
+# meter_split_right_inactive = "="
+# meter_split_right_active = "#"
+# meter_split_right_overload = "!"
+# meter_split_center_left_inactive = "["
+# meter_split_center_left_active = "["
+# meter_split_center_right_inactive = "]"
+# meter_split_center_right_active = "]"
 dropdown_icon = "\\"
 dropdown_selector = ">"
 dropdown_more = "~~~"

@@ -37,6 +37,16 @@ pub struct CharSetOverlay {
     meter_center_left_active: Option<String>,
     meter_center_right_inactive: Option<String>,
     meter_center_right_active: Option<String>,
+    meter_split_left_inactive: Option<String>,
+    meter_split_left_active: Option<String>,
+    meter_split_left_overload: Option<String>,
+    meter_split_right_inactive: Option<String>,
+    meter_split_right_active: Option<String>,
+    meter_split_right_overload: Option<String>,
+    meter_split_center_left_inactive: Option<String>,
+    meter_split_center_left_active: Option<String>,
+    meter_split_center_right_inactive: Option<String>,
+    meter_split_center_right_active: Option<String>,
     dropdown_icon: Option<String>,
     dropdown_selector: Option<String>,
     dropdown_more: Option<String>,
@@ -100,6 +110,26 @@ impl TryFrom<CharSetOverlay> for CharSet {
             };
         }
 
+        // Same as `validate_and_set!`, but for the optional
+        // `meter_split_*` fields, whose unset state (`None`) is itself
+        // meaningful (falls back to the corresponding stock
+        // `meter_left`/`meter_right`/`meter_center_*` field at render
+        // time) rather than just "use the built-in default character".
+        macro_rules! validate_and_set_optional {
+            ($field:ident, $length:expr) => {
+                if let Some(value) = overlay.$field {
+                    if $length > 0 && Span::raw(&value).width() != $length {
+                        anyhow::bail!(
+                            "{} must be {} characters wide",
+                            stringify!($field),
+                            $length
+                        );
+                    }
+                    char_set.$field = Some(value);
+                }
+            };
+        }
+
         validate_and_set!(default_device, 1);
         validate_and_set!(default_stream, 1);
         validate_and_set!(hidden_instance, 0);
@@ -125,6 +155,16 @@ impl TryFrom<CharSetOverlay> for CharSet {
         validate_and_set!(meter_center_left_active, 1);
         validate_and_set!(meter_center_right_inactive, 1);
         validate_and_set!(meter_center_right_active, 1);
+        validate_and_set_optional!(meter_split_left_inactive, 1);
+        validate_and_set_optional!(meter_split_left_active, 1);
+        validate_and_set_optional!(meter_split_left_overload, 1);
+        validate_and_set_optional!(meter_split_right_inactive, 1);
+        validate_and_set_optional!(meter_split_right_active, 1);
+        validate_and_set_optional!(meter_split_right_overload, 1);
+        validate_and_set_optional!(meter_split_center_left_inactive, 1);
+        validate_and_set_optional!(meter_split_center_left_active, 1);
+        validate_and_set_optional!(meter_split_center_right_inactive, 1);
+        validate_and_set_optional!(meter_split_center_right_active, 1);
         validate_and_set!(dropdown_icon, 1);
         validate_and_set!(dropdown_selector, 1);
         validate_and_set!(dropdown_more, 0);
@@ -170,6 +210,16 @@ impl Default for CharSet {
             meter_center_left_active: String::from("▮"),
             meter_center_right_inactive: String::from("▮"),
             meter_center_right_active: String::from("▮"),
+            meter_split_left_inactive: Some(String::from("❘")),
+            meter_split_left_active: Some(String::from("❘")),
+            meter_split_left_overload: Some(String::from("❘")),
+            meter_split_right_inactive: Some(String::from("❘")),
+            meter_split_right_active: Some(String::from("❘")),
+            meter_split_right_overload: Some(String::from("❘")),
+            meter_split_center_left_inactive: Some(String::from("▇")),
+            meter_split_center_left_active: Some(String::from("▇")),
+            meter_split_center_right_inactive: Some(String::from("▇")),
+            meter_split_center_right_active: Some(String::from("▇")),
             dropdown_icon: String::from("▼"),
             dropdown_selector: String::from(">"),
             dropdown_more: String::from("•••"),
@@ -220,6 +270,16 @@ impl CharSet {
             meter_center_left_active: String::from("█"),
             meter_center_right_inactive: String::from("█"),
             meter_center_right_active: String::from("█"),
+            meter_split_left_inactive: Some(String::from("❘")),
+            meter_split_left_active: Some(String::from("❘")),
+            meter_split_left_overload: Some(String::from("❘")),
+            meter_split_right_inactive: Some(String::from("❘")),
+            meter_split_right_active: Some(String::from("❘")),
+            meter_split_right_overload: Some(String::from("❘")),
+            meter_split_center_left_inactive: Some(String::from("▇")),
+            meter_split_center_left_active: Some(String::from("▇")),
+            meter_split_center_right_inactive: Some(String::from("▇")),
+            meter_split_center_right_active: Some(String::from("▇")),
             dropdown_icon: String::from("▼"),
             dropdown_selector: String::from(">"),
             dropdown_more: String::from("•••"),
@@ -256,6 +316,16 @@ impl CharSet {
             meter_center_left_active: String::from("["),
             meter_center_right_inactive: String::from("]"),
             meter_center_right_active: String::from("]"),
+            meter_split_left_inactive: None,
+            meter_split_left_active: None,
+            meter_split_left_overload: None,
+            meter_split_right_inactive: None,
+            meter_split_right_active: None,
+            meter_split_right_overload: None,
+            meter_split_center_left_inactive: None,
+            meter_split_center_left_active: None,
+            meter_split_center_right_inactive: None,
+            meter_split_center_right_active: None,
             dropdown_icon: String::from("\\"),
             dropdown_selector: String::from(">"),
             dropdown_more: String::from("~~~"),

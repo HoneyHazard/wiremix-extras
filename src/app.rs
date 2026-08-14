@@ -67,8 +67,44 @@ pub enum Action {
     SelectTab(usize),
     SetAbsoluteVolume(f32),
     ToggleCompactLayout,
+    /// Sets the volume of a single channel by index (into the selected
+    /// node's own `positions`/`volumes`), leaving every other channel
+    /// alone - unlike `SetAbsoluteVolume`, which applies to every channel
+    /// together. No-op if the selected node doesn't have that many
+    /// channels.
+    SetChannelAbsoluteVolume(usize, f32),
+    /// Adjusts the volume of a single channel by index, relative to its
+    /// own current value - the per-channel counterpart to
+    /// `SetRelativeVolume`, which adjusts every channel together instead.
+    SetChannelRelativeVolume(usize, f32),
+    /// Toggles "Channel mode": whether keyboard navigation and volume keys
+    /// (`SetAbsoluteVolume`/`SetRelativeVolume`) target the whole selected
+    /// node together, or step through and adjust its channels one at a
+    /// time. See the multichannel design notes, §7.3/§7.4.
+    ToggleChannelMode,
+    /// Cycles `channel_display` between "unified" (one bar/row per node)
+    /// and "always" (always split, per `split_style`). Independent of
+    /// `ToggleChannelMode`, which controls *setting*, not display.
+    CycleChannelDisplay,
+    /// Switches directly to one of the three high-level views (Unified/
+    /// Linked/Channels - see `ChannelView`), regardless of `view_cycle`.
+    SelectView(crate::config::ChannelView),
+    /// Advances to the next view in `view_cycle`, wrapping - the
+    /// higher-level counterpart to `ToggleChannelMode`/
+    /// `CycleChannelDisplay` (which this doesn't replace - both still
+    /// work independently for anyone who wants the old two-axis
+    /// behavior instead of three named views).
+    CycleView,
     #[serde(skip_deserializing)]
     SelectObject(ObjectId),
+    /// Moves the channel-mode cursor to a specific channel index, without
+    /// changing which node is selected. Mouse-only (like `SelectObject`) -
+    /// paired with it in a channel row's own click mouse areas so clicking
+    /// a channel also targets it for subsequent keyboard volume keys,
+    /// rather than leaving a stale `selected_channel` from whatever was
+    /// last cursored via the keyboard.
+    #[serde(skip_deserializing)]
+    SelectChannel(usize),
     #[serde(skip_deserializing)]
     SetTarget(view::Target),
     // This can be used to delete a default keybinding - make it do nothing.
@@ -92,6 +128,9 @@ impl std::fmt::Display for Action {
             Action::SelectObject(object_id) => {
                 write!(f, "Select object {object_id:?}")
             }
+            Action::SelectChannel(channel) => {
+                write!(f, "Select channel {channel}")
+            }
             Action::SetTarget(_) => write!(f, "Set target"),
             Action::ToggleMute => write!(f, "Toggle mute"),
             Action::ToggleHiddenInstance => {
@@ -103,9 +142,25 @@ impl std::fmt::Display for Action {
             Action::SetAbsoluteVolume(vol) => {
                 write!(f, "Set volume to {}%", Self::format_percentage(*vol))
             }
+            Action::SetChannelAbsoluteVolume(channel, vol) => {
+                write!(
+                    f,
+                    "Set channel {channel} volume to {}%",
+                    Self::format_percentage(*vol)
+                )
+            }
             Action::SetRelativeVolume(vol) => {
                 Self::format_relative_volume(f, *vol)
             }
+            Action::SetChannelRelativeVolume(channel, vol) => {
+                Self::format_channel_relative_volume(f, *channel, *vol)
+            }
+            Action::ToggleChannelMode => write!(f, "Toggle channel mode"),
+            Action::CycleChannelDisplay => {
+                write!(f, "Cycle channel display")
+            }
+            Action::SelectView(view) => write!(f, "Switch to {view:?} view"),
+            Action::CycleView => write!(f, "Cycle view"),
             Action::SetDefault => write!(f, "Set default"),
             Action::ToggleCompactLayout => write!(f, "Toggle compact layout"),
             Action::Help => write!(f, "Show/hide help"),
@@ -139,6 +194,31 @@ impl Action {
             }
             v => {
                 write!(f, "Decrease volume by {}%", Self::format_percentage(-v))
+            }
+        }
+    }
+
+    fn format_channel_relative_volume(
+        f: &mut std::fmt::Formatter<'_>,
+        channel: usize,
+        vol: f32,
+    ) -> std::fmt::Result {
+        match vol {
+            0.01 => write!(f, "Increment channel {channel} volume"),
+            -0.01 => write!(f, "Decrement channel {channel} volume"),
+            v if v >= 0.0 => {
+                write!(
+                    f,
+                    "Increase channel {channel} volume by {}%",
+                    Self::format_percentage(v)
+                )
+            }
+            v => {
+                write!(
+                    f,
+                    "Decrease channel {channel} volume by {}%",
+                    Self::format_percentage(-v)
+                )
             }
         }
     }
@@ -272,6 +352,11 @@ pub struct App<'a> {
     /// advanced. See ROTATION_FRAME_INTERVAL - deliberately a frame count,
     /// not a wall-clock duration.
     frames_since_rotation: u32,
+    /// Fixed reference point for `unified_imbalance = "cycle"`'s
+    /// stateless phase-offset timing (`NOTES-multichannel.md` §7.2/§10) -
+    /// elapsed time since this is recomputed fresh every render, nothing
+    /// else is stored per-node.
+    start_time: Instant,
 }
 
 macro_rules! current_list {
@@ -286,7 +371,15 @@ impl<'a> App<'a> {
         rx: mpsc::Receiver<Event>,
         config: Config,
     ) -> Self {
-        let tabs = config.tabs.iter().copied().map(Tab::from).collect();
+        let mut tabs: Vec<Tab> =
+            config.tabs.iter().copied().map(Tab::from).collect();
+        for tab in &mut tabs {
+            tab.list.channel_mode = config.channel_mode;
+            tab.list.channel_display = config.channel_display;
+            tab.list.unified_imbalance = config.unified_imbalance;
+            tab.list.split_style = config.split_style;
+            tab.list.pair_label_style = config.pair_label_style;
+        }
 
         // Update peaks with VU-meter-style ballistics
         let peak_processor = |new_peak, current_peak, samples, rate| {
@@ -325,6 +418,7 @@ impl<'a> App<'a> {
             capturing_objects: HashSet::new(),
             capture_rotation_start: 0,
             frames_since_rotation: 0,
+            start_time: Instant::now(),
         }
     }
 
@@ -527,6 +621,7 @@ impl<'a> App<'a> {
             config: &self.config,
             hidden_instance: &self.hidden_instance,
             hidden_permanent: &self.hidden_permanent,
+            elapsed_seconds: self.start_time.elapsed().as_secs_f32(),
         };
         let mut widget_state = AppWidgetState {
             mouse_areas: &mut self.mouse_areas,
@@ -1044,6 +1139,10 @@ impl Handle for Action {
             Action::SelectObject(object_id) => {
                 app.tabs[app.current_tab_index].list.selected = Some(object_id)
             }
+            Action::SelectChannel(channel) => {
+                app.tabs[app.current_tab_index].list.selected_channel =
+                    Some(channel);
+            }
             Action::ToggleMute => {
                 current_list!(app).toggle_mute(&app.view);
             }
@@ -1133,21 +1232,63 @@ impl Handle for Action {
                     app.state_dirty = true;
                 }
             }
+            Action::ToggleChannelMode => {
+                current_list!(app).toggle_channel_mode(&app.view);
+            }
+            Action::CycleChannelDisplay => {
+                current_list!(app).cycle_channel_display();
+            }
+            Action::SelectView(target) => {
+                current_list!(app).select_view(target, &app.view);
+            }
+            Action::CycleView => {
+                let view_cycle = app.config.view_cycle.clone();
+                current_list!(app).cycle_channel_view(&view_cycle, &app.view);
+            }
             Action::SetAbsoluteVolume(volume) => {
                 let max = app
                     .config
                     .enforce_max_volume
                     .then_some(app.config.max_volume_percent);
+                // In channel mode, the whole-node volume keys target only
+                // the currently-cursored channel instead - see §7.4.
+                if let Some(channel) = current_list!(app).selected_channel {
+                    return Ok(current_list!(app).set_channel_absolute_volume(
+                        &app.view, channel, volume, max,
+                    ));
+                }
                 current_list!(app).set_absolute_volume(&app.view, volume, max);
                 return Ok(current_list!(app)
                     .set_absolute_volume(&app.view, volume, max));
+            }
+            Action::SetChannelAbsoluteVolume(channel, volume) => {
+                let max = app
+                    .config
+                    .enforce_max_volume
+                    .then_some(app.config.max_volume_percent);
+                return Ok(current_list!(app).set_channel_absolute_volume(
+                    &app.view, channel, volume, max,
+                ));
             }
             Action::SetRelativeVolume(volume) => {
                 // Relative decreases have no maximum.
                 let max = (volume > 0.0 && app.config.enforce_max_volume)
                     .then_some(app.config.max_volume_percent);
+                if let Some(channel) = current_list!(app).selected_channel {
+                    return Ok(current_list!(app).set_channel_relative_volume(
+                        &app.view, channel, volume, max,
+                    ));
+                }
                 return Ok(current_list!(app)
                     .set_relative_volume(&app.view, volume, max));
+            }
+            Action::SetChannelRelativeVolume(channel, volume) => {
+                // Relative decreases have no maximum.
+                let max = (volume > 0.0 && app.config.enforce_max_volume)
+                    .then_some(app.config.max_volume_percent);
+                return Ok(current_list!(app).set_channel_relative_volume(
+                    &app.view, channel, volume, max,
+                ));
             }
             Action::SetDefault => {
                 current_list!(app).set_default(&app.view);
@@ -1264,6 +1405,7 @@ pub struct AppWidget<'a, 'b> {
     config: &'a Config,
     hidden_instance: &'a HashSet<ObjectId>,
     hidden_permanent: &'a HashSet<ObjectId>,
+    elapsed_seconds: f32,
 }
 
 pub struct AppWidgetState<'a> {
@@ -1331,6 +1473,7 @@ impl<'a> StatefulWidget for AppWidget<'a, '_> {
             config: self.config,
             hidden_instance: self.hidden_instance,
             hidden_permanent: self.hidden_permanent,
+            elapsed_seconds: self.elapsed_seconds,
         };
         widget.render(list_area, buf, state.mouse_areas);
 
@@ -1416,6 +1559,17 @@ mod tests {
             tabs: vec![TabKind::Playback],
             lazy_capture: Default::default(),
             capture_hidden: true,
+            channel_display: Default::default(),
+            unified_imbalance: Default::default(),
+            split_style: Default::default(),
+            channel_mode: Default::default(),
+            pair_label_style: Default::default(),
+            view_cycle: Default::default(),
+            unified_meter_layout: Default::default(),
+            linked_meter_layout: Default::default(),
+            channels_meter_layout: Default::default(),
+            expand_unused_label_space: Default::default(),
+            expand_unpaired_channel_bars: Default::default(),
             filters: Default::default(),
             show_dividers: Default::default(),
             compact_layout: Default::default(),
@@ -1559,6 +1713,17 @@ mod tests {
             ],
             lazy_capture: Default::default(),
             capture_hidden: true,
+            channel_display: Default::default(),
+            unified_imbalance: Default::default(),
+            split_style: Default::default(),
+            channel_mode: Default::default(),
+            pair_label_style: Default::default(),
+            view_cycle: Default::default(),
+            unified_meter_layout: Default::default(),
+            linked_meter_layout: Default::default(),
+            channels_meter_layout: Default::default(),
+            expand_unused_label_space: Default::default(),
+            expand_unpaired_channel_bars: Default::default(),
             filters: Default::default(),
             show_dividers: Default::default(),
             compact_layout: Default::default(),
@@ -1749,6 +1914,189 @@ mod tests {
         assert!(Action::SetAbsoluteVolume(1.05).handle(&mut app).unwrap());
 
         // 90% is allowed
+        assert!(Action::SetRelativeVolume(-0.10).handle(&mut app).unwrap());
+        assert!(Action::SetAbsoluteVolume(0.90).handle(&mut app).unwrap());
+    }
+
+    #[test]
+    fn channel_volume_limit_not_enforcing() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        app.config.max_volume_percent = 100.0;
+        app.config.enforce_max_volume = false;
+
+        // Channel 0 is currently at 100%
+
+        // 110% is allowed
+        assert!(Action::SetChannelRelativeVolume(0, 0.10)
+            .handle(&mut app)
+            .unwrap());
+        assert!(Action::SetChannelAbsoluteVolume(0, 1.10)
+            .handle(&mut app)
+            .unwrap());
+
+        // 90% is allowed
+        assert!(Action::SetChannelRelativeVolume(0, -0.10)
+            .handle(&mut app)
+            .unwrap());
+        assert!(Action::SetChannelAbsoluteVolume(0, 0.90)
+            .handle(&mut app)
+            .unwrap());
+    }
+
+    #[test]
+    fn channel_volume_limit_at_max() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        app.config.max_volume_percent = 100.0;
+        app.config.enforce_max_volume = true;
+
+        // Channel 0 is currently at 100%
+
+        // 110% is not allowed
+        assert!(!Action::SetChannelRelativeVolume(0, 0.10)
+            .handle(&mut app)
+            .unwrap());
+        assert!(!Action::SetChannelAbsoluteVolume(0, 1.10)
+            .handle(&mut app)
+            .unwrap());
+
+        // 90% is allowed
+        assert!(Action::SetChannelRelativeVolume(0, -0.10)
+            .handle(&mut app)
+            .unwrap());
+        assert!(Action::SetChannelAbsoluteVolume(0, 0.90)
+            .handle(&mut app)
+            .unwrap());
+
+        // 100% is allowed
+        assert!(Action::SetChannelAbsoluteVolume(0, 1.00)
+            .handle(&mut app)
+            .unwrap());
+    }
+
+    #[test]
+    fn channel_volume_out_of_range_is_noop() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        app.config.enforce_max_volume = false;
+
+        // The fixture node only has 2 channels (indices 0 and 1)
+        assert!(!Action::SetChannelRelativeVolume(2, -0.10)
+            .handle(&mut app)
+            .unwrap());
+        assert!(!Action::SetChannelAbsoluteVolume(2, 0.90)
+            .handle(&mut app)
+            .unwrap());
+    }
+
+    #[test]
+    fn select_channel_sets_selected_channel_without_touching_selected() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let object_id = app.tabs[app.current_tab_index].list.selected;
+
+        assert!(Action::SelectChannel(1).handle(&mut app).unwrap());
+
+        let list = &app.tabs[app.current_tab_index].list;
+        assert_eq!(list.selected, object_id);
+        assert_eq!(list.selected_channel, Some(1));
+    }
+
+    #[test]
+    fn relative_volume_preserves_existing_channel_imbalance() {
+        // Whole-node relative volume (h/l, arrows, scroll) must apply the
+        // same delta to each channel's own current value, not collapse to
+        // a mean first - matching pulsemixer: +10 on a=30/b=50 gives
+        // a=40/b=60, not a=b=50. Absolute/set operations are unaffected
+        // (still fill every channel to the same explicit target).
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str("");
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        let object_id = ObjectId::from_raw_id(0);
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Test node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_media_name(String::from("Media name"));
+        props.set_node_name(String::from("Node name"));
+        props.set_object_serial(0);
+        let events = vec![
+            StateEvent::NodeProperties { object_id, props },
+            StateEvent::NodePositions {
+                object_id,
+                positions: vec![0, 1],
+            },
+            StateEvent::NodeVolumes {
+                object_id,
+                // Displayed as 30%/50% (raw = cube of the displayed
+                // fraction, matching how volumes are stored elsewhere).
+                volumes: vec![0.3_f32.powi(3), 0.5_f32.powi(3)],
+            },
+            StateEvent::NodeMute {
+                object_id,
+                mute: false,
+            },
+        ];
+        for event in events {
+            event.handle(&mut app).unwrap();
+        }
+        app.view = View::from(
+            &wirehose,
+            &app.state,
+            &app.config.names,
+            &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+        Action::SelectObject(object_id).handle(&mut app).unwrap();
+
+        assert!(Action::SetRelativeVolume(0.10).handle(&mut app).unwrap());
+
+        let dispatched = commands.borrow_mut().pop_back();
+        let Some(mock::MockCommand::NodeVolumes(dispatched_id, volumes)) =
+            dispatched
+        else {
+            panic!("expected a NodeVolumes command, got {dispatched:?}");
+        };
+        assert_eq!(dispatched_id, object_id);
+        assert_eq!(volumes.len(), 2);
+        // 30% + 10% = 40%, 50% + 10% = 60% - each channel's own value, not
+        // both collapsed to (30+50)/2 + 10 = 50%.
+        assert!((volumes[0].cbrt() * 100.0 - 40.0).abs() < 0.5);
+        assert!((volumes[1].cbrt() * 100.0 - 60.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn channel_mode_routes_whole_node_volume_keys_to_selected_channel() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        app.config.enforce_max_volume = false;
+
+        // Selecting a channel index past the fixture node's own channel
+        // count proves the whole-node volume keys really did redirect to
+        // the per-channel path - the whole-node path (`View::volume`) has
+        // no such bound to fail on, only `View::channel_volume` does.
+        app.tabs[app.current_tab_index].list.selected_channel = Some(2);
+
+        assert!(!Action::SetRelativeVolume(0.10).handle(&mut app).unwrap());
+        assert!(!Action::SetAbsoluteVolume(0.90).handle(&mut app).unwrap());
+    }
+
+    #[test]
+    fn channel_mode_whole_node_volume_keys_enforce_max_per_channel() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        app.config.max_volume_percent = 100.0;
+        app.config.enforce_max_volume = true;
+        app.tabs[app.current_tab_index].list.selected_channel = Some(0);
+
+        // Channel 0 is at 100% already.
+        assert!(!Action::SetRelativeVolume(0.10).handle(&mut app).unwrap());
+        assert!(!Action::SetAbsoluteVolume(1.10).handle(&mut app).unwrap());
+
         assert!(Action::SetRelativeVolume(-0.10).handle(&mut app).unwrap());
         assert!(Action::SetAbsoluteVolume(0.90).handle(&mut app).unwrap());
     }

@@ -130,6 +130,47 @@ pub struct Opt {
     #[clap(long, conflicts_with = "no_capture_hidden")]
     pub capture_hidden: bool,
 
+    /// Whether a node's volume is ever shown as more than one bar/row when
+    /// its setting is linked - "unified" (always one, see
+    /// --unified-imbalance) or "always" (always split, see --split-style)
+    #[clap(long, value_parser = clap::value_parser!(config::ChannelDisplay))]
+    pub channel_display: Option<config::ChannelDisplay>,
+
+    /// When --channel-display=unified, how an imbalanced node (channels
+    /// that don't all hold the same value) is indicated without actually
+    /// splitting the display: "none" (no indication), "cycle" (briefly
+    /// cycle through each channel's own label+value), or "split" (that one
+    /// node splits, per --split-style, while balanced nodes stay unified)
+    #[clap(long, value_parser = clap::value_parser!(config::UnifiedImbalance))]
+    pub unified_imbalance: Option<config::UnifiedImbalance>,
+
+    /// Rendering style whenever a node's volume actually is split:
+    /// "radiating" (a lone simple pair gets one row with two bars growing
+    /// from a shared center marker; anything with more channels - extra
+    /// singles alongside a pair, more than one pair, or no pair at all -
+    /// gets one row per detected pair/channel instead, each pair still
+    /// radiating on its own row) or "stacked" (one row per channel, always,
+    /// regardless of pairing)
+    #[clap(long, value_parser = clap::value_parser!(config::SplitStyle))]
+    pub split_style: Option<config::SplitStyle>,
+
+    /// Start with volume keys adjusting every channel of the selected node
+    /// together (linked/ganged) - the default
+    #[clap(long, conflicts_with = "channel_mode")]
+    pub no_channel_mode: bool,
+
+    /// Start with volume keys adjusting only the individually-cursored
+    /// channel of the selected node ("Channel mode" - see
+    /// ToggleChannelMode)
+    #[clap(long, conflicts_with = "no_channel_mode")]
+    pub channel_mode: bool,
+
+    /// How a radiating pair row labels which physical pair it's showing,
+    /// once more than one row can appear in the same node's split display
+    /// (a lone pair needs no label): "verbose" ("F L/R") or "short" ("F")
+    #[clap(long, value_parser = clap::value_parser!(config::PairLabelStyle))]
+    pub pair_label_style: Option<config::PairLabelStyle>,
+
     #[cfg(debug_assertions)]
     #[clap(short, long)]
     pub dump_events: bool,
