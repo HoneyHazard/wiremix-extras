@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
-use crate::config::{Config, MatchCondition, Peaks, TabKind};
+use crate::config::{Config, MatchCondition, Peaks, TabKind, UnifiedImbalance};
 use crate::hidden_state::HiddenState;
 use crate::wirehose::state::CaptureEligibility;
 use crate::wirehose::{
@@ -422,6 +422,13 @@ impl<'a> App<'a> {
         }
     }
 
+    /// How often the event loop wakes up on its own (absent any real
+    /// event) to redraw purely for unified_imbalance = "cycle"'s sake -
+    /// see the call site in `run()`. Well under the ~1.5s per-channel
+    /// interval `cycling_channel` itself uses, so a channel swap never
+    /// waits noticeably longer than that to actually appear.
+    const CYCLING_WAKEUP_INTERVAL: Duration = Duration::from_millis(250);
+
     /// Loads persisted permanently-hidden-item matchers from `path` and
     /// remembers `path` for future saves. Call once after construction and
     /// before [`Self::run`] - matching entries won't take effect against
@@ -604,11 +611,31 @@ impl<'a> App<'a> {
                 })?;
             }
 
-            needs_render |= self.handle_events(
-                // If there's no fps limit, we definitely rendered in this
-                // iteration, so needs_render is false, and there is no timeout.
-                needs_render.then_some(pacer.duration_until_next_frame()),
-            )?;
+            // If there's no fps limit, we definitely rendered in this
+            // iteration, so needs_render is false, and there is no timeout.
+            //
+            // Otherwise, when nothing else needs a redraw, we'd normally
+            // block indefinitely for the next real event (keypress or
+            // PipeWire state change) - fine for everything else, since
+            // they're all driven by state that's already known to have
+            // changed. unified_imbalance = "cycle" is the one exception:
+            // its display depends purely on wall-clock time, with no
+            // event of its own to wake this loop up. Waking on our own
+            // timer whenever it's configured, and treating that wake-up
+            // itself as a reason to redraw (handle_events correctly
+            // returns false for it - no *event* was handled - so it
+            // can't be the one to set needs_render here), guarantees a
+            // redraw at least every CYCLING_WAKEUP_INTERVAL even when
+            // PipeWire and the keyboard both stay silent, so the cycling
+            // label doesn't freeze indefinitely during a quiet moment.
+            let cycling_wakeup = !needs_render
+                && self.config.unified_imbalance == UnifiedImbalance::Cycle;
+            let timeout = needs_render
+                .then_some(pacer.duration_until_next_frame())
+                .or(cycling_wakeup.then_some(Self::CYCLING_WAKEUP_INTERVAL));
+
+            needs_render |= self.handle_events(timeout)?;
+            needs_render |= cycling_wakeup;
         }
 
         self.error_message.map_or(Ok(()), |s| Err(anyhow!(s)))
