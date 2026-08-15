@@ -72,7 +72,7 @@ impl TryFrom<CharSetOverlay> for CharSet {
             Some("default") => CharSet::default(),
             Some("compat") => CharSet::compat(),
             Some("extracompat") => CharSet::extracompat(),
-            Some("redshift_compact") => CharSet::redshift_compact(),
+            Some("redshift_compat") => CharSet::redshift_compat(),
             Some(inherit) => {
                 anyhow::bail!("'{}' is not a built-in character set", inherit)
             }
@@ -173,8 +173,8 @@ impl CharSet {
             (String::from("compat"), CharSet::compat()),
             (String::from("extracompat"), CharSet::extracompat()),
             (
-                String::from("redshift_compact"),
-                CharSet::redshift_compact(),
+                String::from("redshift_compat"),
+                CharSet::redshift_compat(),
             ),
         ])
     }
@@ -245,7 +245,7 @@ impl CharSet {
     /// `redshift` theme: a solid-block selector column (unmistakable at
     /// a glance) plus plain hairline borders and a shorter "more items"
     /// ellipsis elsewhere, for a more compact overall look.
-    fn redshift_compact() -> CharSet {
+    fn redshift_compat() -> CharSet {
         Self {
             selector_top: String::from("█"),
             selector_middle: String::from("█"),
@@ -285,10 +285,10 @@ impl CharSet {
         if !merged.contains_key("extracompat") {
             merged.insert(String::from("extracompat"), CharSet::extracompat());
         }
-        if !merged.contains_key("redshift_compact") {
+        if !merged.contains_key("redshift_compat") {
             merged.insert(
-                String::from("redshift_compact"),
-                CharSet::redshift_compact(),
+                String::from("redshift_compat"),
+                CharSet::redshift_compat(),
             );
         }
         Ok(merged)

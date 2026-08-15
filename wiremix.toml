@@ -581,10 +581,10 @@ help_border = "Plain"
 
 # Appendix B: an example dark theme
 #
-# "redshift" + "redshift_compact" - a warm, low-blue dark theme paired
+# "redshift" + "redshift_compat" - a warm, low-blue dark theme paired
 # with a slightly denser character set. Try it with:
 #
-#   wiremix -t redshift -s redshift_compact
+#   wiremix -t redshift -s redshift_compat
 #
 # Design rules for the theme:
 #  1. Nothing meaningful depends on blue or cyan hues - the stock theme's
@@ -656,7 +656,7 @@ help_more         = { fg = "DarkGray" }
 # A slightly denser companion char_set: solid-block selector column
 # (unmistakable at a glance) plus plain hairline borders and a shorter
 # "more items" ellipsis elsewhere, for a more compact overall look.
-[char_sets.redshift_compact]
+[char_sets.redshift_compat]
 inherit = "compat"
 selector_top    = "█"
 selector_middle = "█"
