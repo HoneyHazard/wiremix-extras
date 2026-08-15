@@ -138,20 +138,18 @@ impl Default for Theme {
             volume: Style::default(),
             volume_empty: Style::default().fg(Color::DarkGray),
             volume_filled: Style::default().fg(Color::LightBlue),
-            // A dim shade of the same hue meter_active/meter_overload use
-            // in their own zone, rather than a flat DarkGray - previews
-            // which zone each not-yet-lit position belongs to (green vs.
-            // red) the way a physical VU meter's unlit red zone still
-            // reads as "red," just dark, even with the needle elsewhere.
-            // Uses the standard (non-Light) Green, not LightGreen -
-            // meter_active below is LightGreen, but meter_overload's own
-            // active color is already the standard (non-Light) Red, so
-            // pairing this with plain Green keeps both inactive zones a
-            // comparable step down from their own active color instead
-            // of leaving green disproportionately brighter than red.
-            meter_inactive: Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::DIM),
+            // The ordinary unlit zone keeps its classic flat DarkGray -
+            // unchanged from how every meter looked before this feature
+            // existed. Only the overload-preview zone below gets its own
+            // dim red; that contrast (boring gray vs. dim red) is what
+            // actually previews "this position is past the overload
+            // boundary," without also re-coloring the zone that isn't.
+            meter_inactive: Style::default().fg(Color::DarkGray),
+            // A dim shade of meter_overload's own hue, rather than a
+            // second flat gray - previews that this zone is the overload
+            // one specifically, the way a physical VU meter's unlit red
+            // zone still reads as "red," just dark, even with the needle
+            // elsewhere.
             meter_inactive_overload: Style::default()
                 .fg(Color::Red)
                 .add_modifier(Modifier::DIM),
