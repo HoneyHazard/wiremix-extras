@@ -51,7 +51,7 @@ experience here is very welcome.
   color (and matching `compat` glyph) that previews where the overload
   boundary sits on a meter's unlit portion, before the signal actually
   reaches it.
-- **A built-in dark theme** (`-t redshift -s redshift_compact`) — ready to
+- **A built-in dark theme** (`-t redshift -s redshift_compat`) — ready to
   try with no configuration file needed.
 - **Multichannel and channel-pairing support** — per-channel volume
   control, three views cycled with `Space` (collapsed / linked / per-
@@ -62,7 +62,7 @@ experience here is very welcome.
   [multichannel-pairing PR](https://github.com/tsowell/wiremix/pull/76)
   for a longer gallery covering each of these individually.
 
-| Default theme | Built-in dark theme (`-t redshift -s redshift_compact`) |
+| Default theme | Built-in dark theme (`-t redshift -s redshift_compat`) |
 | --- | --- |
 | ![Default theme](./assets/screenshot-default-theme.png) | ![Dark theme](./assets/screenshot-dark-theme.png) |
 
