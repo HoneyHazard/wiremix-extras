@@ -1302,7 +1302,7 @@ mod tests {
         let mut example: ConfigFile = example.into();
 
         // wiremix.toml also documents an example "redshift"/
-        // "redshift_compact" theme/char_set beyond the built-in ones -
+        // "redshift_compat" theme/char_set beyond the built-in ones -
         // strip those extra entries before comparing, so this test still
         // verifies the *built-in* documented defaults match the
         // compiled-in Rust defaults without requiring every example

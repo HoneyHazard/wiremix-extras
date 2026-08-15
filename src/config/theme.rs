@@ -355,7 +355,12 @@ impl Theme {
                 .fg(Color::Rgb(0xFF, 0xD3, 0x4D))
                 .bg(Color::Rgb(0x1D, 0x0A, 0x0A))
                 .add_modifier(Modifier::BOLD),
-            row_unselected: Style::default().bg(Color::Rgb(0x1F, 0x0D, 0x0D)),
+            // No background here - with item dividers available, an
+            // unselected row's own dark-red backdrop is redundant for
+            // separating items and reads as visually heavy across a full
+            // list. row_selected's own whole-row fill still marks the
+            // current item clearly.
+            row_unselected: Style::default(),
             dropdown_selected: Style::default()
                 .fg(Color::Rgb(0xFF, 0xD3, 0x4D))
                 .add_modifier(Modifier::BOLD | Modifier::REVERSED),

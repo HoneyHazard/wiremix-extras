@@ -975,10 +975,10 @@ help_border = "Plain"
 
 # Appendix B: an example dark theme
 #
-# "redshift" + "redshift_compact" - a warm, low-blue dark theme paired
+# "redshift" + "redshift_compat" - a warm, low-blue dark theme paired
 # with a slightly denser character set. Try it with:
 #
-#   wiremix -t redshift -s redshift_compact
+#   wiremix -t redshift -s redshift_compat
 #
 # Design rules for the theme:
 #  1. Nothing meaningful depends on blue or cyan hues - the stock theme's
@@ -1031,11 +1031,11 @@ meter_center_inactive  = { fg = "DarkGray" }
 # fg), just red-toned instead of brown.
 row_selected = { fg = "#FFD34D", bg = "#1D0A0A", add_modifier = "BOLD" }
 
-# Faint background tint on every unselected row's text only, much
-# darker/less saturated than row_selected's bg so it never competes
-# with the selection highlight - distinguishes item rows from the
-# blank gaps between them at a glance.
-row_unselected = { bg = "#1F0D0D" }
+# No background - with item dividers available, a per-row tint is
+# redundant for telling items apart and reads as visually heavy across
+# a full list. row_selected's own whole-row fill still marks the
+# current item clearly.
+row_unselected = { }
 
 # Dropdowns: reuse the selection yellow; REVERSED carries the contrast
 # via fg/bg swap rather than hue, so it stays legible even if warm hues
@@ -1050,7 +1050,7 @@ help_more         = { fg = "DarkGray" }
 # A slightly denser companion char_set: solid-block selector column
 # (unmistakable at a glance) plus plain hairline borders and a shorter
 # "more items" ellipsis elsewhere, for a more compact overall look.
-[char_sets.redshift_compact]
+[char_sets.redshift_compat]
 inherit = "compat"
 selector_top    = "█"
 selector_middle = "█"
