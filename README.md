@@ -7,13 +7,21 @@ combination can be played with as a whole rather than one change at a time.
 Feedback on either the individual PRs or the combined
 experience here is very welcome.
 
+> **Disclaimer:** roughly 99% of the code, docs, and media in this
+> repository was produced through AI-assisted coding. This started as a
+> personal experiment to see how far a set of added features could be
+> pushed on top of wiremix - not a claim of engineering rigor. That said,
+> I genuinely hope some of these features, or something like them, find
+> their way into wiremix itself someday, because it's a truly wonderful
+> tool.
+
 <img src="https://raw.githubusercontent.com/HoneyHazard/wiremix/assets/readme/demo.gif" width="612">
 
-*A 5.1 device, real peak activity throughout: `Space` cycling `unified` → `linked` → `channels`, raising then lowering one channel's volume independently in `channels` view (and a second channel lowered too - individual per-channel control, not just the pair), the resulting imbalance shown as asymmetric radiating bars in `linked` and as `unified_imbalance = "cycle"` alternating between channels while collapsed back in `unified`, a mute/unmute, and a hide/unhide round trip (`t`, then `End` to jump to the hidden items sinking to the bottom of the list, `t` again, then `Home`) - all with the selection backdrop's `row_selected_extend_above`/`_below` filling the row gaps.*
+*View cycling (`unified`/`linked`/`channels`), per-channel volume control, imbalance display, mute, and hide/unhide - real peak activity throughout.*
 
 <img src="https://raw.githubusercontent.com/HoneyHazard/wiremix/assets/readme/demo-redshift.gif" width="500">
 
-*The same walkthrough in the built-in `redshift` theme, using `default`'s blockier meter glyph instead of `redshift_compact`'s thin one.*
+*The same features in the built-in `redshift` theme.*
 
 ## What's included
 
