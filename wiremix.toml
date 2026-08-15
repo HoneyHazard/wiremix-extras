@@ -637,11 +637,11 @@ meter_center_inactive  = { fg = "DarkGray" }
 # fg), just red-toned instead of brown.
 row_selected = { fg = "#FFD34D", bg = "#3A1414", add_modifier = "BOLD" }
 
-# Faint background tint on every unselected row's text only, much
-# darker/less saturated than row_selected's bg so it never competes
-# with the selection highlight - distinguishes item rows from the
-# blank gaps between them at a glance.
-row_unselected = { bg = "#1F0D0D" }
+# No background - with item dividers available, a per-row tint is
+# redundant for telling items apart and reads as visually heavy across
+# a full list. row_selected's own whole-row fill still marks the
+# current item clearly.
+row_unselected = { }
 
 # Dropdowns: reuse the selection yellow; REVERSED carries the contrast
 # via fg/bg swap rather than hue, so it stays legible even if warm hues
