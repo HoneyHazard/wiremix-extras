@@ -9,11 +9,11 @@ experience here is very welcome.
 
 <img src="https://raw.githubusercontent.com/HoneyHazard/wiremix/assets/readme/demo.gif" width="612">
 
-*A 5.1 device, real peak activity throughout: raising overall volume in `unified` view, `Space` cycling to `linked` then `channels`, adjusting one channel's volume independently in `channels` view to create a genuine imbalance, that imbalance shown as asymmetric radiating bars in `linked` view and as `unified_imbalance = "cycle"` alternating between channels while collapsed back in `unified`, then a mute/unmute and a hidden item, all with the selection backdrop's `row_selected_extend_above`/`_below` filling the row gaps.*
+*A 5.1 device, real peak activity throughout: `Space` cycling `unified` → `linked` → `channels`, raising then lowering one channel's volume independently in `channels` view (and a second channel lowered too - individual per-channel control, not just the pair), the resulting imbalance shown as asymmetric radiating bars in `linked` and as `unified_imbalance = "cycle"` alternating between channels while collapsed back in `unified`, a mute/unmute, and a hide/unhide round trip (`t`, then `End` to jump to the hidden items sinking to the bottom of the list, `t` again, then `Home`) - all with the selection backdrop's `row_selected_extend_above`/`_below` filling the row gaps.*
 
 <img src="https://raw.githubusercontent.com/HoneyHazard/wiremix/assets/readme/demo-redshift.gif" width="500">
 
-*The same walkthrough in the built-in `redshift` theme.*
+*The same walkthrough in the built-in `redshift` theme, using `default`'s blockier meter glyph instead of `redshift_compact`'s thin one.*
 
 ## What's included
 
