@@ -584,7 +584,10 @@ volume_filled = { fg = "LightBlue" }
 # Inactive uses a dim shade of the same hue as active, rather than a flat
 # gray - previews which zone a not-yet-lit position belongs to, the way a
 # physical VU meter's unlit red zone still reads as "red," just dark.
-meter_inactive = { fg = "LightGreen", add_modifier = "DIM" }
+# Standard (non-Light) Green, not LightGreen - meter_overload's own active
+# color is already the standard (non-Light) Red, so this keeps both
+# inactive zones a comparable step down from their own active color.
+meter_inactive = { fg = "Green", add_modifier = "DIM" }
 meter_active = { fg = "LightGreen" }
 meter_overload = { fg = "Red" }
 # The portion of an unlit meter that's past the same 0.0 dB boundary
