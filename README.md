@@ -13,11 +13,11 @@ experience here is very welcome.
 
 <img src="https://raw.githubusercontent.com/HoneyHazard/wiremix/assets/readme/demo.gif" width="612">
 
-*`Space` cycling through `unified`/`linked`/`channels` view, `unified_imbalance = "cycle"` alternating a genuinely imbalanced stream's L/R values while still collapsed, and per-channel cursor movement in `channels` view - all on real hardware with live peak activity.*
+*A 5.1 device, real peak activity throughout: raising overall volume in `unified` view, `Space` cycling to `linked` then `channels`, adjusting one channel's volume independently in `channels` view to create a genuine imbalance, that imbalance shown as asymmetric radiating bars in `linked` view and as `unified_imbalance = "cycle"` alternating between channels while collapsed back in `unified`, then a mute/unmute and a hidden item, all with the selection backdrop's `row_selected_extend_above`/`_below` filling the row gaps.*
 
 <img src="https://raw.githubusercontent.com/HoneyHazard/wiremix/assets/readme/demo-redshift.gif" width="500">
 
-*The same walkthrough (`unified` → `linked` → `channels`) in the built-in `redshift` theme.*
+*The same walkthrough in the built-in `redshift` theme.*
 
 ## What's included
 
