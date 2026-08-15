@@ -143,8 +143,14 @@ impl Default for Theme {
             // which zone each not-yet-lit position belongs to (green vs.
             // red) the way a physical VU meter's unlit red zone still
             // reads as "red," just dark, even with the needle elsewhere.
+            // Uses the standard (non-Light) Green, not LightGreen -
+            // meter_active below is LightGreen, but meter_overload's own
+            // active color is already the standard (non-Light) Red, so
+            // pairing this with plain Green keeps both inactive zones a
+            // comparable step down from their own active color instead
+            // of leaving green disproportionately brighter than red.
             meter_inactive: Style::default()
-                .fg(Color::LightGreen)
+                .fg(Color::Green)
                 .add_modifier(Modifier::DIM),
             meter_inactive_overload: Style::default()
                 .fg(Color::Red)
