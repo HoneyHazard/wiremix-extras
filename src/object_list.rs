@@ -14,8 +14,8 @@ use smallvec::smallvec;
 
 use crate::app::{Action, MouseArea};
 use crate::config::{
-    ChannelDisplay, ChannelState, ChannelView, Config, PairLabelStyle,
-    SplitStyle, UnifiedImbalance,
+    ChannelState, ChannelView, Config, PairLabelStyle, SplitStyle,
+    UnifiedImbalance,
 };
 use crate::device_kind::DeviceKind;
 use crate::device_widget::DeviceWidget;
@@ -42,20 +42,15 @@ pub struct ObjectList {
     pub dropdown_state: ListState,
     /// Targets
     pub targets: Vec<(view::Target, String)>,
-    /// Whether keyboard navigation and volume actions target individual
-    /// channels of the selected node instead of the whole node together.
-    /// See `selected_channel`.
-    pub channel_mode: bool,
+    /// Which of the three views is active - see `ChannelView`. Seeded
+    /// from `Config::initial_view` at startup; changed live via
+    /// `Action::SelectView`/`Action::CycleView`.
+    pub view: ChannelView,
     /// Which channel of the selected node is targeted. Only meaningful
-    /// while `channel_mode` is on; `None` whenever `channel_mode` is off,
-    /// or the selected object has fewer than two channels to cycle
-    /// through (nothing to individually target).
+    /// while `view` is `Channels`; `None` otherwise, or whenever the
+    /// selected object has fewer than two channels to cycle through
+    /// (nothing to individually target).
     pub selected_channel: Option<usize>,
-    /// Whether a node's volume is ever shown as more than one bar/row
-    /// when `channel_mode` is off (linked setting). Seeded from
-    /// `Config::channel_display` at startup; toggled live via
-    /// `Action::CycleChannelDisplay`.
-    pub channel_display: ChannelDisplay,
     /// See `Config::unified_imbalance`. Seeded from config; no runtime
     /// toggle yet.
     pub unified_imbalance: UnifiedImbalance,
@@ -125,48 +120,12 @@ impl ObjectList {
         }
     }
 
-    /// Toggles whether keyboard navigation and volume actions target
-    /// individual channels of the selected node ("Channel mode" - see the
-    /// multichannel design notes) instead of the whole node together.
-    pub fn toggle_channel_mode(&mut self, view: &view::View) {
-        self.channel_mode = !self.channel_mode;
-        self.selected_channel =
-            self.initial_channel(view, self.selected, false);
-    }
-
-    /// Cycles the display axis between showing a node's volume as one
-    /// combined bar/row ("unified") and always splitting it ("always") -
-    /// see `Config::channel_display`. Independent of `channel_mode`.
-    pub fn cycle_channel_display(&mut self) {
-        self.channel_display = match self.channel_display {
-            ChannelDisplay::Unified => ChannelDisplay::Always,
-            ChannelDisplay::Always => ChannelDisplay::Unified,
-        };
-    }
-
-    /// The current `ChannelView` - see `ChannelState::view`.
-    pub fn channel_view(&self) -> ChannelView {
-        self.channel_state().view()
-    }
-
     /// Switches directly to the given `ChannelView` - see
     /// `Action::SelectView`. `unified_imbalance`/`split_style`/
     /// `pair_label_style` are untouched; they're orthogonal display
     /// refinements, not part of the view itself.
     pub fn select_view(&mut self, target: ChannelView, view: &view::View) {
-        match target {
-            ChannelView::Unified => {
-                self.channel_mode = false;
-                self.channel_display = ChannelDisplay::Unified;
-            }
-            ChannelView::Linked => {
-                self.channel_mode = false;
-                self.channel_display = ChannelDisplay::Always;
-            }
-            ChannelView::Channels => {
-                self.channel_mode = true;
-            }
-        }
+        self.view = target;
         self.selected_channel =
             self.initial_channel(view, self.selected, false);
     }
@@ -181,8 +140,7 @@ impl ObjectList {
         view_cycle: &[ChannelView],
         view: &view::View,
     ) {
-        let current = self.channel_view();
-        let next = match view_cycle.iter().position(|v| *v == current) {
+        let next = match view_cycle.iter().position(|v| *v == self.view) {
             Some(i) => view_cycle[(i + 1) % view_cycle.len()],
             None => *view_cycle.first().unwrap_or(&ChannelView::Unified),
         };
@@ -192,8 +150,7 @@ impl ObjectList {
     /// Bundles the display/setting axes for passing to `NodeWidget`.
     pub fn channel_state(&self) -> ChannelState {
         ChannelState {
-            channel_mode: self.channel_mode,
-            channel_display: self.channel_display,
+            view: self.view,
             unified_imbalance: self.unified_imbalance,
             split_style: self.split_style,
             pair_label_style: self.pair_label_style,
@@ -225,7 +182,7 @@ impl ObjectList {
         object_id: Option<ObjectId>,
         from_end: bool,
     ) -> Option<usize> {
-        if !self.channel_mode {
+        if self.view != ChannelView::Channels {
             return None;
         }
         let object_id = object_id?;
@@ -965,7 +922,7 @@ mod tests {
 
         let mut object_list =
             ObjectList::new(ListKind::Node(NodeKind::All), None);
-        object_list.channel_mode = true;
+        object_list.view = ChannelView::Channels;
 
         // Selecting the first object lands on its first channel - every
         // `init()` node has 2 channels.
@@ -997,7 +954,7 @@ mod tests {
 
         let mut object_list =
             ObjectList::new(ListKind::Node(NodeKind::All), None);
-        object_list.channel_mode = true;
+        object_list.view = ChannelView::Channels;
 
         // Walk down to node 2, channel 1.
         object_list.down(&view);
@@ -1031,7 +988,7 @@ mod tests {
 
         let mut object_list =
             ObjectList::new(ListKind::Node(NodeKind::All), None);
-        object_list.channel_mode = true;
+        object_list.view = ChannelView::Channels;
 
         // Walk down 5 steps, recording (selected, selected_channel) after
         // each one.
@@ -1107,7 +1064,7 @@ mod tests {
 
         let mut object_list =
             ObjectList::new(ListKind::Node(NodeKind::All), None);
-        object_list.channel_mode = true;
+        object_list.view = ChannelView::Channels;
 
         // The mono node has nothing to cycle through.
         object_list.down(&view);
@@ -1121,7 +1078,7 @@ mod tests {
     }
 
     #[test]
-    fn toggle_channel_mode_sets_initial_channel_for_current_selection() {
+    fn select_view_sets_initial_channel_for_current_selection() {
         let (state, wirehose) = init();
         let view = View::from(
             &wirehose,
@@ -1135,36 +1092,17 @@ mod tests {
         object_list.down(&view);
         assert_eq!(object_list.selected_channel, None);
 
-        object_list.toggle_channel_mode(&view);
-        assert!(object_list.channel_mode);
+        object_list.select_view(ChannelView::Channels, &view);
+        assert_eq!(object_list.view, ChannelView::Channels);
         assert_eq!(object_list.selected_channel, Some(0));
 
-        object_list.toggle_channel_mode(&view);
-        assert!(!object_list.channel_mode);
+        object_list.select_view(ChannelView::Unified, &view);
+        assert_eq!(object_list.view, ChannelView::Unified);
         assert_eq!(object_list.selected_channel, None);
     }
 
     #[test]
-    fn channel_view_derives_from_channel_mode_and_channel_display() {
-        let mut object_list =
-            ObjectList::new(ListKind::Node(NodeKind::All), None);
-        assert_eq!(object_list.channel_view(), ChannelView::Unified);
-
-        object_list.channel_display = ChannelDisplay::Always;
-        assert_eq!(object_list.channel_view(), ChannelView::Linked);
-
-        // channel_mode wins regardless of channel_display - a lone
-        // channel_mode = true node with channel_display left "unified"
-        // still renders split (see NodeWidget), so it must report as
-        // Channels here too.
-        object_list.channel_mode = true;
-        assert_eq!(object_list.channel_view(), ChannelView::Channels);
-        object_list.channel_display = ChannelDisplay::Unified;
-        assert_eq!(object_list.channel_view(), ChannelView::Channels);
-    }
-
-    #[test]
-    fn select_view_switches_channel_mode_and_channel_display() {
+    fn select_view_sets_view_and_resets_selected_channel() {
         let (state, wirehose) = init();
         let view = View::from(
             &wirehose,
@@ -1178,17 +1116,15 @@ mod tests {
         object_list.down(&view);
 
         object_list.select_view(ChannelView::Linked, &view);
-        assert!(!object_list.channel_mode);
-        assert_eq!(object_list.channel_display, ChannelDisplay::Always);
+        assert_eq!(object_list.view, ChannelView::Linked);
         assert_eq!(object_list.selected_channel, None);
 
         object_list.select_view(ChannelView::Channels, &view);
-        assert!(object_list.channel_mode);
+        assert_eq!(object_list.view, ChannelView::Channels);
         assert_eq!(object_list.selected_channel, Some(0));
 
         object_list.select_view(ChannelView::Unified, &view);
-        assert!(!object_list.channel_mode);
-        assert_eq!(object_list.channel_display, ChannelDisplay::Unified);
+        assert_eq!(object_list.view, ChannelView::Unified);
         assert_eq!(object_list.selected_channel, None);
     }
 
@@ -1210,17 +1146,17 @@ mod tests {
         let mut object_list =
             ObjectList::new(ListKind::Node(NodeKind::All), None);
         object_list.down(&view);
-        assert_eq!(object_list.channel_view(), ChannelView::Unified);
+        assert_eq!(object_list.view, ChannelView::Unified);
 
         object_list.cycle_channel_view(&cycle, &view);
-        assert_eq!(object_list.channel_view(), ChannelView::Linked);
+        assert_eq!(object_list.view, ChannelView::Linked);
 
         object_list.cycle_channel_view(&cycle, &view);
-        assert_eq!(object_list.channel_view(), ChannelView::Channels);
+        assert_eq!(object_list.view, ChannelView::Channels);
 
         // Wraps back to the first entry after the last.
         object_list.cycle_channel_view(&cycle, &view);
-        assert_eq!(object_list.channel_view(), ChannelView::Unified);
+        assert_eq!(object_list.view, ChannelView::Unified);
     }
 
     #[test]
@@ -1241,10 +1177,10 @@ mod tests {
         let mut object_list =
             ObjectList::new(ListKind::Node(NodeKind::All), None);
         object_list.down(&view);
-        assert_eq!(object_list.channel_view(), ChannelView::Unified);
+        assert_eq!(object_list.view, ChannelView::Unified);
 
         object_list.cycle_channel_view(&cycle, &view);
-        assert_eq!(object_list.channel_view(), ChannelView::Linked);
+        assert_eq!(object_list.view, ChannelView::Linked);
     }
 
     #[test]
@@ -1289,7 +1225,7 @@ mod tests {
             ObjectList::new(ListKind::Node(NodeKind::All), None);
         assert_eq!(object_list.visible_count(&view, &rect), 1);
 
-        object_list.channel_mode = true;
+        object_list.view = ChannelView::Channels;
         assert_eq!(object_list.visible_count(&view, &rect), 0);
     }
 
@@ -1339,7 +1275,7 @@ mod tests {
         let visible = object_list.visible_objects(&rect, &view);
         assert!(visible.contains(&object_id));
 
-        object_list.channel_mode = true;
+        object_list.view = ChannelView::Channels;
         let visible = object_list.visible_objects(&rect, &view);
         assert!(!visible.contains(&object_id));
     }

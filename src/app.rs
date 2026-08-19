@@ -68,23 +68,10 @@ pub enum Action {
     /// own current value - the per-channel counterpart to
     /// `SetRelativeVolume`, which adjusts every channel together instead.
     SetChannelRelativeVolume(usize, f32),
-    /// Toggles "Channel mode": whether keyboard navigation and volume keys
-    /// (`SetAbsoluteVolume`/`SetRelativeVolume`) target the whole selected
-    /// node together, or step through and adjust its channels one at a
-    /// time. See the multichannel design notes, §7.3/§7.4.
-    ToggleChannelMode,
-    /// Cycles `channel_display` between "unified" (one bar/row per node)
-    /// and "always" (always split, per `split_style`). Independent of
-    /// `ToggleChannelMode`, which controls *setting*, not display.
-    CycleChannelDisplay,
-    /// Switches directly to one of the three high-level views (Unified/
-    /// Linked/Channels - see `ChannelView`), regardless of `view_cycle`.
+    /// Switches directly to one of the three views (Unified/Linked/
+    /// Channels - see `ChannelView`), regardless of `view_cycle`.
     SelectView(crate::config::ChannelView),
-    /// Advances to the next view in `view_cycle`, wrapping - the
-    /// higher-level counterpart to `ToggleChannelMode`/
-    /// `CycleChannelDisplay` (which this doesn't replace - both still
-    /// work independently for anyone who wants the old two-axis
-    /// behavior instead of three named views).
+    /// Advances to the next view in `view_cycle`, wrapping.
     CycleView,
     #[serde(skip_deserializing)]
     SelectObject(ObjectId),
@@ -135,10 +122,6 @@ impl std::fmt::Display for Action {
             }
             Action::SetChannelRelativeVolume(channel, vol) => {
                 Self::format_channel_relative_volume(f, *channel, *vol)
-            }
-            Action::ToggleChannelMode => write!(f, "Toggle channel mode"),
-            Action::CycleChannelDisplay => {
-                write!(f, "Cycle channel display")
             }
             Action::SelectView(view) => write!(f, "Switch to {view:?} view"),
             Action::CycleView => write!(f, "Cycle view"),
@@ -316,8 +299,7 @@ impl<'a> App<'a> {
         let mut tabs: Vec<Tab> =
             config.tabs.iter().copied().map(Tab::from).collect();
         for tab in &mut tabs {
-            tab.list.channel_mode = config.channel_mode;
-            tab.list.channel_display = config.channel_display;
+            tab.list.view = config.initial_view;
             tab.list.unified_imbalance = config.unified_imbalance;
             tab.list.split_style = config.split_style;
             tab.list.pair_label_style = config.pair_label_style;
@@ -736,12 +718,6 @@ impl Handle for Action {
             Action::ToggleMute => {
                 current_list!(app).toggle_mute(&app.view);
             }
-            Action::ToggleChannelMode => {
-                current_list!(app).toggle_channel_mode(&app.view);
-            }
-            Action::CycleChannelDisplay => {
-                current_list!(app).cycle_channel_display();
-            }
             Action::SelectView(target) => {
                 current_list!(app).select_view(target, &app.view);
             }
@@ -1051,10 +1027,9 @@ mod tests {
             tab: 0,
             tabs: vec![TabKind::Playback],
             lazy_capture: Default::default(),
-            channel_display: Default::default(),
+            initial_view: Default::default(),
             unified_imbalance: Default::default(),
             split_style: Default::default(),
-            channel_mode: Default::default(),
             pair_label_style: Default::default(),
             view_cycle: Default::default(),
             unified_meter_layout: Default::default(),
@@ -1163,10 +1138,9 @@ mod tests {
                 TabKind::Configuration,
             ],
             lazy_capture: Default::default(),
-            channel_display: Default::default(),
+            initial_view: Default::default(),
             unified_imbalance: Default::default(),
             split_style: Default::default(),
-            channel_mode: Default::default(),
             pair_label_style: Default::default(),
             view_cycle: Default::default(),
             unified_meter_layout: Default::default(),

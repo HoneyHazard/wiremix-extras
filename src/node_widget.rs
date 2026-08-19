@@ -15,8 +15,8 @@ use smallvec::smallvec;
 use crate::app::{Action, MouseArea};
 use crate::channel_pairing::{self, ChannelGroup};
 use crate::config::{
-    ChannelDisplay, ChannelState, ChannelView, Config, MeterLayout,
-    PairLabelStyle, Peaks, SplitStyle, UnifiedImbalance,
+    ChannelState, ChannelView, Config, MeterLayout, PairLabelStyle, Peaks,
+    SplitStyle, UnifiedImbalance,
 };
 use crate::device_kind::DeviceKind;
 use crate::meter;
@@ -75,20 +75,21 @@ fn volume_display(
         return VolumeDisplay::Unified;
     }
 
-    // Channel mode (individual setting) always wins over the display
-    // axis: always stacked, regardless of channel_display/split_style -
-    // radiating's marker-placement problem for an individually-cursored
-    // channel isn't solved yet (see NOTES-multichannel.md §5/§7.5).
-    if channel_state.channel_mode {
+    // Channels view (individual setting) always wins: always stacked,
+    // regardless of split_style - radiating's marker-placement problem
+    // for an individually-cursored channel isn't solved yet (see
+    // NOTES-multichannel.md §5/§7.5).
+    if channel_state.view == ChannelView::Channels {
         return VolumeDisplay::Stacked;
     }
 
-    let wants_split = match channel_state.channel_display {
-        ChannelDisplay::Always => true,
-        ChannelDisplay::Unified => {
+    let wants_split = match channel_state.view {
+        ChannelView::Linked => true,
+        ChannelView::Unified => {
             is_imbalanced(node)
                 && channel_state.unified_imbalance == UnifiedImbalance::Split
         }
+        ChannelView::Channels => unreachable!("handled above"),
     };
 
     if !wants_split {
@@ -113,7 +114,7 @@ fn volume_display(
 /// The row layout `Stacked` should use: one entry per row, in render
 /// order. A detected left/right pair collapses to a single
 /// `ChannelGroup::Pair` row (rendered as a radiating mini-bar) only when
-/// split_style = "radiating" and channel_mode is off - Channel mode
+/// split_style = "radiating" and the view isn't `Channels` - `Channels`
 /// always wants every raw channel individually addressable (radiating's
 /// marker-placement problem for a cursored channel isn't solved), and
 /// split_style = "stacked" means exactly what it says. Without
@@ -126,7 +127,7 @@ fn display_rows(
     let per_channel =
         || (0..node.volumes.len()).map(ChannelGroup::Single).collect();
 
-    if channel_state.channel_mode
+    if channel_state.view == ChannelView::Channels
         || channel_state.split_style == SplitStyle::Stacked
     {
         return per_channel();
@@ -226,7 +227,7 @@ fn cycling_channel(
     node: &view::Node,
     elapsed_seconds: f32,
 ) -> Option<usize> {
-    if channel_state.channel_display != ChannelDisplay::Unified
+    if channel_state.view != ChannelView::Unified
         || channel_state.unified_imbalance != UnifiedImbalance::Cycle
     {
         return None;
@@ -397,7 +398,8 @@ impl<'a> NodeWidget<'a> {
         // rows this block has. A marker on the header row alone left every
         // row below it looking like it belonged to no selection at all.
         let header_split = row_layout(row_areas[0]);
-        let header_marked = self.selected && !self.channel_state.channel_mode;
+        let header_marked =
+            self.selected && self.channel_state.view != ChannelView::Channels;
         if header_marked {
             let top_char = if groups.is_empty() {
                 &self.config.char_set.selector_middle
@@ -413,8 +415,9 @@ impl<'a> NodeWidget<'a> {
             mouse_areas,
         );
 
-        // Whenever split_style = "radiating" (and channel_mode is off -
-        // display_rows never produces a Pair group otherwise), every row
+        // Whenever split_style = "radiating" (and the view isn't
+        // Channels - display_rows never produces a Pair group otherwise),
+        // every row
         // - a detected pair or a lone unpaired channel alike - shares
         // the same column grid: label | left/unpaired % | left/unpaired
         // bar | divider-or-blank | right bar-or-blank | right %-or-
@@ -427,12 +430,13 @@ impl<'a> NodeWidget<'a> {
         // plain, left-aligned, full-width `ChannelRowWidget` instead -
         // there's no radiating row anywhere in the block to stay
         // consistent with there.
-        let radiating_context = !self.channel_state.channel_mode
+        let radiating_context = self.channel_state.view
+            != ChannelView::Channels
             && self.channel_state.split_style == SplitStyle::Radiating;
         let bar_width = (radiating_context && visible_groups > 0).then(|| {
             let content_width = Self::split_row_content_width(
                 self.config,
-                self.channel_state.view(),
+                self.channel_state.view,
                 row_layout(row_areas[1])[1],
             );
             RadiatingRowWidget::bar_width(content_width)
@@ -453,7 +457,8 @@ impl<'a> NodeWidget<'a> {
             }
             match *group {
                 ChannelGroup::Single(channel_index) => {
-                    let marked = self.channel_state.channel_mode
+                    let marked = self.channel_state.view
+                        == ChannelView::Channels
                         && self.selected
                         && self.selected_channel == Some(channel_index);
                     if marked {
@@ -474,7 +479,7 @@ impl<'a> NodeWidget<'a> {
                                 "radiating_context is exactly the \
                                  condition bar_width was computed from",
                             ),
-                            self.channel_state.view(),
+                            self.channel_state.view,
                         )
                         .render(
                             split[1],
@@ -486,7 +491,7 @@ impl<'a> NodeWidget<'a> {
                             self.config,
                             self.node,
                             channel_index,
-                            self.channel_state.view(),
+                            self.channel_state.view,
                         )
                         .render(
                             split[1],
@@ -506,7 +511,7 @@ impl<'a> NodeWidget<'a> {
                             "a pair row's presence implies radiating_context, \
                              the condition bar_width was computed from",
                         ),
-                        self.channel_state.view(),
+                        self.channel_state.view,
                     )
                     .render(split[1], buf, mouse_areas);
                 }
@@ -621,7 +626,7 @@ impl StatefulWidget for NodeWidget<'_> {
         // Every view (including Unified) shares the same generic
         // volume/meter split now - see `split_meter_row`/
         // `peaks_off_volume_area`.
-        let view = self.channel_state.view();
+        let view = self.channel_state.view;
         let meter_layout = self.config.meter_layout(view);
 
         // Render volume bar and (if enabled) peak meter
@@ -972,7 +977,7 @@ impl StatefulWidget for VolumeWidget<'_> {
         // regardless, whether or not cycling applies to them (it never
         // does - see `cycling_channel`) - see `VOLUME_LABEL_WIDTH`'s
         // doc comment for why.
-        let view = self.channel_state.view();
+        let view = self.channel_state.view;
         let label_width = if view == ChannelView::Unified {
             STOCK_VOLUME_LABEL_WIDTH
         } else {
@@ -1567,8 +1572,8 @@ const RADIATING_PERCENT_WIDTH: u16 = 5;
 /// the previous 4.
 const VOLUME_LABEL_WIDTH: u16 = 13;
 
-/// `VolumeWidget`'s label width in `Unified` view (channel_mode off,
-/// channel_display = "unified") - `UNIFIED_CHANNEL_LABEL_WIDTH` (4) for
+/// `VolumeWidget`'s label width in `Unified` view -
+/// `UNIFIED_CHANNEL_LABEL_WIDTH` (4) for
 /// a cycling row's own channel label, plus the percent's own worst case
 /// ("muted", 5 columns), side by side with no overlap, `4 + 5 = 9`.
 /// This never changes for `unified_imbalance = "cycle"` - every Unified
@@ -2180,8 +2185,7 @@ mod tests {
         let area = Rect::new(0, 0, 40, 1);
         let mut buf = Buffer::empty(area);
         let channel_state = ChannelState {
-            channel_mode: false,
-            channel_display: config.channel_display,
+            view: config.initial_view,
             unified_imbalance: config.unified_imbalance,
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
@@ -2214,13 +2218,12 @@ mod tests {
     fn render_node_lines(
         config: &Config,
         node: &view::Node,
-        channel_mode: bool,
+        view: ChannelView,
         selected: bool,
         selected_channel: Option<usize>,
     ) -> Vec<String> {
         let channel_state = ChannelState {
-            channel_mode,
-            channel_display: config.channel_display,
+            view,
             unified_imbalance: config.unified_imbalance,
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
@@ -2229,7 +2232,7 @@ mod tests {
         render_node_lines_with_height(
             config,
             node,
-            channel_mode,
+            view,
             selected,
             selected_channel,
             height,
@@ -2245,14 +2248,13 @@ mod tests {
     fn render_node_lines_with_height(
         config: &Config,
         node: &view::Node,
-        channel_mode: bool,
+        view: ChannelView,
         selected: bool,
         selected_channel: Option<usize>,
         height: u16,
     ) -> Vec<String> {
         let channel_state = ChannelState {
-            channel_mode,
-            channel_display: config.channel_display,
+            view,
             unified_imbalance: config.unified_imbalance,
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
@@ -2294,8 +2296,7 @@ mod tests {
         width: u16,
     ) -> Vec<String> {
         let channel_state = ChannelState {
-            channel_mode: false,
-            channel_display: config.channel_display,
+            view: config.initial_view,
             unified_imbalance: config.unified_imbalance,
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
@@ -2379,8 +2380,7 @@ mod tests {
             Some(vec![fl, fr]),
             vec![0.5_f32.powi(3), 0.5_f32.powi(3)],
         );
-        let config =
-            config::Config::from_toml_str("channel_display = \"always\"");
+        let config = config::Config::from_toml_str("initial_view = \"linked\"");
 
         // render_to_string uses a 40-wide area - the remaining bar space
         // after fixed segments (40 - 17 = 23) is odd, exactly the case
@@ -2403,8 +2403,7 @@ mod tests {
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let mut node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
         node.mute = true;
-        let config =
-            config::Config::from_toml_str("channel_display = \"always\"");
+        let config = config::Config::from_toml_str("initial_view = \"linked\"");
 
         let rendered = render_to_string(&config, &node);
 
@@ -2427,11 +2426,11 @@ mod tests {
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
 
         let narrow_config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nmax_volume_percent = 100.0\n\
+            "initial_view = \"linked\"\nmax_volume_percent = 100.0\n\
              expand_unused_label_space = false",
         );
         let expanded_config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nmax_volume_percent = 100.0\n\
+            "initial_view = \"linked\"\nmax_volume_percent = 100.0\n\
              expand_unused_label_space = true",
         );
 
@@ -2514,7 +2513,7 @@ mod tests {
     }
 
     #[test]
-    fn channel_display_unified_renders_single_averaged_bar() {
+    fn unified_view_renders_single_averaged_bar() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         // Left at 100%, right at 0% (raw linear volumes, i.e. the cubes of
@@ -2536,7 +2535,7 @@ mod tests {
 
     #[test]
     fn unified_view_bar_start_never_moves_for_cycling() {
-        // Default config (channel_display = "unified", unified_imbalance
+        // Default config (initial_view = "unified", unified_imbalance
         // = "none") now carries small non-`None` gap/right_margin
         // defaults (see default_gap/default_right_margin in config.rs),
         // so it no longer takes the literal-stock fast path - the bar
@@ -2600,12 +2599,22 @@ mod tests {
 
         let unified_config = config::Config::from_toml_str("");
         let linked_config =
-            config::Config::from_toml_str("channel_display = \"always\"");
+            config::Config::from_toml_str("initial_view = \"linked\"");
 
-        let unified_lines =
-            render_node_lines(&unified_config, &node, false, false, None);
-        let linked_lines =
-            render_node_lines(&linked_config, &node, false, false, None);
+        let unified_lines = render_node_lines(
+            &unified_config,
+            &node,
+            ChannelView::Unified,
+            false,
+            None,
+        );
+        let linked_lines = render_node_lines(
+            &linked_config,
+            &node,
+            ChannelView::Linked,
+            false,
+            None,
+        );
 
         let bar_start = |lines: &[String], filled: &str| -> usize {
             lines
@@ -2640,7 +2649,7 @@ mod tests {
         // renders at 0.0.
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
         let config = config::Config::from_toml_str(
-            "channel_display = \"unified\"\nunified_imbalance = \"cycle\"",
+            "initial_view = \"unified\"\nunified_imbalance = \"cycle\"",
         );
 
         let rendered = render_to_string(&config, &node);
@@ -2669,7 +2678,7 @@ mod tests {
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
         let config = config::Config::from_toml_str(
-            "channel_display = \"unified\"\nunified_imbalance = \"cycle\"",
+            "initial_view = \"unified\"\nunified_imbalance = \"cycle\"",
         );
 
         let rendered = render_to_string(&config, &node);
@@ -2693,7 +2702,7 @@ mod tests {
         let mut node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
         node.mute = true;
         let config = config::Config::from_toml_str(
-            "channel_display = \"unified\"\nunified_imbalance = \"cycle\"",
+            "initial_view = \"unified\"\nunified_imbalance = \"cycle\"",
         );
 
         let rendered = render_to_string(&config, &node);
@@ -2725,7 +2734,7 @@ mod tests {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let config = config::Config::from_toml_str(
-            "channel_display = \"unified\"\nunified_imbalance = \"cycle\"",
+            "initial_view = \"unified\"\nunified_imbalance = \"cycle\"",
         );
 
         // Channel 0's own value at differing percent widths - 64% (two
@@ -2750,12 +2759,11 @@ mod tests {
     }
 
     #[test]
-    fn channel_display_always_renders_independent_percentages() {
+    fn linked_view_renders_independent_percentages() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
-        let config =
-            config::Config::from_toml_str("channel_display = \"always\"");
+        let config = config::Config::from_toml_str("initial_view = \"linked\"");
 
         let rendered = render_to_string(&config, &node);
 
@@ -2767,23 +2775,21 @@ mod tests {
     }
 
     #[test]
-    fn channel_display_always_without_a_pair_falls_back_to_single_bar() {
+    fn linked_view_without_a_pair_falls_back_to_single_bar() {
         // Mono - nothing to pair, so this must render exactly like
-        // channel_display was left "unified", even though it's "always".
+        // initial_view was left "unified", even though it's "linked".
         let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
         let node = test_node(Some(vec![mono]), vec![0.5_f32.powi(3)]);
-        let config =
-            config::Config::from_toml_str("channel_display = \"always\"");
+        let config = config::Config::from_toml_str("initial_view = \"linked\"");
 
         let rendered = render_to_string(&config, &node);
 
         assert!(rendered.contains("50%"));
     }
 
-    fn channel_state(channel_mode: bool) -> ChannelState {
+    fn channel_state(view: ChannelView) -> ChannelState {
         ChannelState {
-            channel_mode,
-            channel_display: Default::default(),
+            view,
             unified_imbalance: Default::default(),
             split_style: Default::default(),
             pair_label_style: Default::default(),
@@ -2796,31 +2802,29 @@ mod tests {
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]);
         assert_eq!(
-            volume_display(channel_state(false), &node),
+            volume_display(channel_state(ChannelView::Unified), &node),
             VolumeDisplay::Unified
         );
     }
 
     #[test]
-    fn volume_display_channel_mode_always_wins() {
+    fn volume_display_channels_view_always_wins() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
-        let mut state = channel_state(true);
-        state.channel_display = ChannelDisplay::Always;
+        let mut state = channel_state(ChannelView::Channels);
         state.split_style = SplitStyle::Radiating;
         // Even with a detected pair and split_style = radiating,
-        // channel_mode forces Stacked.
+        // Channels view forces Stacked.
         assert_eq!(volume_display(state, &node), VolumeDisplay::Stacked);
     }
 
     #[test]
-    fn volume_display_always_radiates_for_a_detected_pair() {
+    fn volume_display_linked_radiates_for_a_detected_pair() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Always;
+        let mut state = channel_state(ChannelView::Linked);
         state.split_style = SplitStyle::Radiating;
         assert_eq!(
             volume_display(state, &node),
@@ -2832,12 +2836,11 @@ mod tests {
     }
 
     #[test]
-    fn volume_display_always_falls_back_to_stacked_without_a_pair() {
+    fn volume_display_linked_falls_back_to_stacked_without_a_pair() {
         let aux0 = libspa_sys::SPA_AUDIO_CHANNEL_AUX0;
         let aux1 = libspa_sys::SPA_AUDIO_CHANNEL_AUX1;
         let node = test_node(Some(vec![aux0, aux1]), vec![0.5, 0.5]);
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Always;
+        let mut state = channel_state(ChannelView::Linked);
         state.split_style = SplitStyle::Radiating;
         // AUX0/AUX1 never pair, so radiating has nothing to grow from
         // center - falls back to stacked even though split_style asked
@@ -2846,12 +2849,11 @@ mod tests {
     }
 
     #[test]
-    fn volume_display_always_stacked_when_configured() {
+    fn volume_display_linked_stacked_when_configured() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Always;
+        let mut state = channel_state(ChannelView::Linked);
         state.split_style = SplitStyle::Stacked;
         assert_eq!(volume_display(state, &node), VolumeDisplay::Stacked);
     }
@@ -2869,8 +2871,7 @@ mod tests {
         let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
         let lfe = libspa_sys::SPA_AUDIO_CHANNEL_LFE;
         let node = test_node(Some(vec![fl, fr, rl, rr, fc, lfe]), vec![0.5; 6]);
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Always;
+        let mut state = channel_state(ChannelView::Linked);
         state.split_style = SplitStyle::Radiating;
         assert_eq!(volume_display(state, &node), VolumeDisplay::Stacked);
     }
@@ -2884,7 +2885,7 @@ mod tests {
         let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
         let lfe = libspa_sys::SPA_AUDIO_CHANNEL_LFE;
         let node = test_node(Some(vec![fl, fr, rl, rr, fc, lfe]), vec![0.5; 6]);
-        let mut state = channel_state(false);
+        let mut state = channel_state(ChannelView::Unified);
         state.split_style = SplitStyle::Radiating;
 
         assert_eq!(
@@ -2903,7 +2904,7 @@ mod tests {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
-        let mut state = channel_state(false);
+        let mut state = channel_state(ChannelView::Unified);
         state.split_style = SplitStyle::Stacked;
 
         assert_eq!(
@@ -2917,7 +2918,7 @@ mod tests {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
-        let mut state = channel_state(true);
+        let mut state = channel_state(ChannelView::Channels);
         state.split_style = SplitStyle::Radiating;
 
         assert_eq!(
@@ -2931,8 +2932,7 @@ mod tests {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]);
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Unified;
+        let mut state = channel_state(ChannelView::Unified);
         state.unified_imbalance = UnifiedImbalance::None;
         assert_eq!(volume_display(state, &node), VolumeDisplay::Unified);
     }
@@ -2941,8 +2941,7 @@ mod tests {
     fn volume_display_unified_imbalance_split_only_splits_when_imbalanced() {
         let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Unified;
+        let mut state = channel_state(ChannelView::Unified);
         state.unified_imbalance = UnifiedImbalance::Split;
         state.split_style = SplitStyle::Radiating;
 
@@ -2968,8 +2967,7 @@ mod tests {
     fn volume_display_single_channel_always_unified() {
         let mono = libspa_sys::SPA_AUDIO_CHANNEL_MONO;
         let node = test_node(Some(vec![mono]), vec![0.5]);
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Always;
+        let state = channel_state(ChannelView::Linked);
         // Nothing to split - a single channel is unified regardless of
         // every other axis.
         assert_eq!(volume_display(state, &node), VolumeDisplay::Unified);
@@ -2981,8 +2979,7 @@ mod tests {
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]); // imbalanced
 
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Always;
+        let mut state = channel_state(ChannelView::Linked);
         state.unified_imbalance = UnifiedImbalance::Cycle;
         assert_eq!(cycling_channel(state, &node, 0.0), None);
     }
@@ -2993,8 +2990,7 @@ mod tests {
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]); // imbalanced
 
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Unified;
+        let mut state = channel_state(ChannelView::Unified);
         state.unified_imbalance = UnifiedImbalance::None;
         assert_eq!(cycling_channel(state, &node, 0.0), None);
 
@@ -3008,8 +3004,7 @@ mod tests {
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.5]);
 
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Unified;
+        let mut state = channel_state(ChannelView::Unified);
         state.unified_imbalance = UnifiedImbalance::Cycle;
         assert_eq!(cycling_channel(state, &node, 0.0), None);
     }
@@ -3020,8 +3015,7 @@ mod tests {
         let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
         let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]);
 
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Unified;
+        let mut state = channel_state(ChannelView::Unified);
         state.unified_imbalance = UnifiedImbalance::Cycle;
 
         let first =
@@ -3050,8 +3044,7 @@ mod tests {
         let mut node_b = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]);
         node_b.object_id = ObjectId::from_raw_id(500);
 
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Unified;
+        let mut state = channel_state(ChannelView::Unified);
         state.unified_imbalance = UnifiedImbalance::Cycle;
 
         assert_eq!(cycling_channel(state, &node_a, 0.0), Some(0));
@@ -3062,7 +3055,7 @@ mod tests {
     fn node_height_default_is_unaffected_by_channel_count() {
         let node = test_node(None, vec![1.0, 1.0, 1.0]);
         assert_eq!(
-            NodeWidget::node_height(channel_state(false), &node),
+            NodeWidget::node_height(channel_state(ChannelView::Unified), &node),
             NodeWidget::height()
         );
     }
@@ -3071,14 +3064,23 @@ mod tests {
     fn node_height_channel_mode_expands_one_line_per_channel() {
         let node = test_node(None, vec![1.0, 1.0, 1.0]);
         // 1 header line + 3 channel lines
-        assert_eq!(NodeWidget::node_height(channel_state(true), &node), 4);
+        assert_eq!(
+            NodeWidget::node_height(
+                channel_state(ChannelView::Channels),
+                &node
+            ),
+            4
+        );
     }
 
     #[test]
     fn node_height_channel_mode_single_channel_unaffected() {
         let node = test_node(None, vec![1.0]);
         assert_eq!(
-            NodeWidget::node_height(channel_state(true), &node),
+            NodeWidget::node_height(
+                channel_state(ChannelView::Channels),
+                &node
+            ),
             NodeWidget::height()
         );
     }
@@ -3095,8 +3097,7 @@ mod tests {
         let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
         let lfe = libspa_sys::SPA_AUDIO_CHANNEL_LFE;
         let node = test_node(Some(vec![fl, fr, rl, rr, fc, lfe]), vec![0.5; 6]);
-        let mut state = channel_state(false);
-        state.channel_display = ChannelDisplay::Always;
+        let mut state = channel_state(ChannelView::Linked);
         state.split_style = SplitStyle::Radiating;
 
         // 1 header line + 4 group rows
@@ -3110,7 +3111,13 @@ mod tests {
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
         let config = config::Config::from_toml_str("");
 
-        let lines = render_node_lines(&config, &node, true, false, None);
+        let lines = render_node_lines(
+            &config,
+            &node,
+            ChannelView::Channels,
+            false,
+            None,
+        );
 
         assert_eq!(lines.len(), 3); // header + 2 channel rows
                                     // label_col and percent_col are independent fixed-width columns
@@ -3148,8 +3155,14 @@ mod tests {
 
         // Full height would be 7 (header + 6 channels); give it 5 - 2 short,
         // matching the live repro.
-        let lines =
-            render_node_lines_with_height(&config, &node, true, false, None, 5);
+        let lines = render_node_lines_with_height(
+            &config,
+            &node,
+            ChannelView::Channels,
+            false,
+            None,
+            5,
+        );
 
         assert_eq!(lines.len(), 5);
         assert!(
@@ -3187,7 +3200,13 @@ mod tests {
             "char_set = \"extracompat\"\npeaks = \"auto\"",
         );
 
-        let lines = render_node_lines(&config, &node, true, false, None);
+        let lines = render_node_lines(
+            &config,
+            &node,
+            ChannelView::Channels,
+            false,
+            None,
+        );
 
         assert_eq!(lines.len(), 3);
         assert!(lines[1].contains('#'), "loud channel should show fill");
@@ -3209,7 +3228,13 @@ mod tests {
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.03_f32.powi(3)]);
         let config = config::Config::from_toml_str("");
 
-        let lines = render_node_lines(&config, &node, true, false, None);
+        let lines = render_node_lines(
+            &config,
+            &node,
+            ChannelView::Channels,
+            false,
+            None,
+        );
 
         // A simple stereo pair and nothing else, so the label
         // simplifies to "L"/"R" rather than "FL"/"FR".
@@ -3226,7 +3251,13 @@ mod tests {
         let node = test_node(None, vec![1.0, 0.0]);
         let config = config::Config::from_toml_str("");
 
-        let lines = render_node_lines(&config, &node, true, false, None);
+        let lines = render_node_lines(
+            &config,
+            &node,
+            ChannelView::Channels,
+            false,
+            None,
+        );
 
         assert!(lines[1].contains("0  100%"));
         assert!(lines[2].contains("1    0%"));
@@ -3239,7 +3270,13 @@ mod tests {
         let node = test_node(Some(vec![aux0, aux1]), vec![1.0, 0.0]);
         let config = config::Config::from_toml_str("");
 
-        let lines = render_node_lines(&config, &node, true, false, None);
+        let lines = render_node_lines(
+            &config,
+            &node,
+            ChannelView::Channels,
+            false,
+            None,
+        );
 
         assert!(lines[1].contains("AUX0  100%"));
         assert!(lines[2].contains("AUX1    0%"));
@@ -3255,10 +3292,19 @@ mod tests {
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
         let config = config::Config::from_toml_str("");
 
-        let lines = render_node_lines(&config, &node, false, true, Some(1));
+        let lines = render_node_lines(
+            &config,
+            &node,
+            ChannelView::Unified,
+            true,
+            Some(1),
+        );
 
         assert_eq!(lines.len(), 3);
-        assert_eq!(NodeWidget::node_height(channel_state(false), &node), 3);
+        assert_eq!(
+            NodeWidget::node_height(channel_state(ChannelView::Unified), &node),
+            3
+        );
     }
 
     #[test]
@@ -3269,18 +3315,33 @@ mod tests {
         let config = config::Config::from_toml_str("");
         let marker = config.char_set.selector_middle.as_str();
 
-        let channel_0_marked =
-            render_node_lines(&config, &node, true, true, Some(0));
+        let channel_0_marked = render_node_lines(
+            &config,
+            &node,
+            ChannelView::Channels,
+            true,
+            Some(0),
+        );
         assert!(channel_0_marked[1].contains(marker));
         assert!(!channel_0_marked[2].contains(marker));
 
-        let channel_1_marked =
-            render_node_lines(&config, &node, true, true, Some(1));
+        let channel_1_marked = render_node_lines(
+            &config,
+            &node,
+            ChannelView::Channels,
+            true,
+            Some(1),
+        );
         assert!(!channel_1_marked[1].contains(marker));
         assert!(channel_1_marked[2].contains(marker));
 
-        let not_selected =
-            render_node_lines(&config, &node, true, false, Some(0));
+        let not_selected = render_node_lines(
+            &config,
+            &node,
+            ChannelView::Channels,
+            false,
+            Some(0),
+        );
         assert!(!not_selected[1].contains(marker));
         assert!(!not_selected[2].contains(marker));
     }
@@ -3296,7 +3357,13 @@ mod tests {
         let config = config::Config::from_toml_str("");
         let marker = config.char_set.selector_middle.as_str();
 
-        let lines = render_node_lines(&config, &node, true, true, Some(0));
+        let lines = render_node_lines(
+            &config,
+            &node,
+            ChannelView::Channels,
+            true,
+            Some(0),
+        );
         assert!(!lines[0].contains(marker));
     }
 
@@ -3317,7 +3384,7 @@ mod tests {
         let aux1 = libspa_sys::SPA_AUDIO_CHANNEL_AUX1;
         let node = test_node(Some(vec![aux0, aux1]), vec![0.5, 0.5]);
         let config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"stacked\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"stacked\"\n\
              char_set = \"test\"\n\
              [char_sets.test]\n\
              inherit = \"default\"\n\
@@ -3326,7 +3393,8 @@ mod tests {
              selector_bottom = \"_\"",
         );
 
-        let selected = render_node_lines(&config, &node, false, true, None);
+        let selected =
+            render_node_lines(&config, &node, ChannelView::Linked, true, None);
         assert!(
             selected[0].contains('^'),
             "the header row must carry the top cap"
@@ -3341,7 +3409,7 @@ mod tests {
         );
 
         let not_selected =
-            render_node_lines(&config, &node, false, false, None);
+            render_node_lines(&config, &node, ChannelView::Linked, false, None);
         assert!(!not_selected[0].contains('^'));
         assert!(!not_selected[1].contains('*'));
         assert!(!not_selected[2].contains('_'));
@@ -3365,11 +3433,12 @@ mod tests {
             vec![1.0, 0.0, 0.0, 1.0, 1.0, 0.0],
         );
         let config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"radiating\"\n\
              peaks = \"off\"",
         );
 
-        let lines = render_node_lines(&config, &node, false, false, None);
+        let lines =
+            render_node_lines(&config, &node, ChannelView::Linked, false, None);
 
         assert_eq!(lines.len(), 5); // header + 2 pair rows + 2 single rows
                                     // Pair rows are labeled with their group name, not either
@@ -3398,11 +3467,12 @@ mod tests {
         // single row stretch to fill all its own leftover width.
         let node = test_node(Some(vec![fl, fr, fc]), vec![1.0, 0.0, 1.0]);
         let config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"radiating\"\n\
              peaks = \"off\"",
         );
 
-        let lines = render_node_lines(&config, &node, false, false, None);
+        let lines =
+            render_node_lines(&config, &node, ChannelView::Linked, false, None);
         assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
 
         let filled = config.char_set.volume_filled.as_str();
@@ -3434,11 +3504,12 @@ mod tests {
         let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
         let node = test_node(Some(vec![fl, fr, fc]), vec![1.0, 0.0, 1.0]);
         let config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"radiating\"\n\
              peaks = \"off\"\nmax_volume_percent = 100.0",
         );
 
-        let lines = render_node_lines(&config, &node, false, false, None);
+        let lines =
+            render_node_lines(&config, &node, ChannelView::Linked, false, None);
         assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
 
         let filled = config.char_set.volume_filled.as_str();
@@ -3461,20 +3532,30 @@ mod tests {
         let node = test_node(Some(vec![fl, fr, fc]), vec![1.0, 1.0, 1.0]);
 
         let narrow_config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"radiating\"\n\
              peaks = \"off\"\nmax_volume_percent = 100.0",
         );
         let expanded_config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"radiating\"\n\
              peaks = \"off\"\nmax_volume_percent = 100.0\n\
              expand_unpaired_channel_bars = true",
         );
         let filled = narrow_config.char_set.volume_filled.as_str();
 
-        let narrow_lines =
-            render_node_lines(&narrow_config, &node, false, false, None);
-        let expanded_lines =
-            render_node_lines(&expanded_config, &node, false, false, None);
+        let narrow_lines = render_node_lines(
+            &narrow_config,
+            &node,
+            ChannelView::Linked,
+            false,
+            None,
+        );
+        let expanded_lines = render_node_lines(
+            &expanded_config,
+            &node,
+            ChannelView::Linked,
+            false,
+            None,
+        );
 
         let unpaired_bar_end = |lines: &[String]| -> usize {
             lines[2].rfind(filled).expect("FC's bar is fully filled")
@@ -3506,11 +3587,12 @@ mod tests {
         let fc = libspa_sys::SPA_AUDIO_CHANNEL_FC;
         let node = test_node(Some(vec![fl, fr, fc]), vec![0.5, 0.5, 0.5]);
         let config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"radiating\"\n\
              pair_label_style = \"short\"\npeaks = \"off\"",
         );
 
-        let lines = render_node_lines(&config, &node, false, false, None);
+        let lines =
+            render_node_lines(&config, &node, ChannelView::Linked, false, None);
 
         assert!(lines[1].contains('F'));
         assert!(!lines[1].contains("L|R"));
@@ -3524,11 +3606,12 @@ mod tests {
         let mut node = test_node(Some(vec![fl, fr, fc]), vec![1.0, 1.0, 1.0]);
         node.mute = true;
         let config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"radiating\"\n\
              peaks = \"off\"",
         );
 
-        let lines = render_node_lines(&config, &node, false, false, None);
+        let lines =
+            render_node_lines(&config, &node, ChannelView::Linked, false, None);
         assert_eq!(lines.len(), 3); // header + pair row + single row
 
         // The pair row's divider must still render (not collapsed into
@@ -3563,11 +3646,12 @@ mod tests {
         // even though meter_left_active/meter_right_active/mono's own
         // active glyph are all '#' in extracompat.
         let config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"radiating\"\n\
              char_set = \"extracompat\"\npeaks = \"mono\"",
         );
 
-        let lines = render_node_lines(&config, &node, false, false, None);
+        let lines =
+            render_node_lines(&config, &node, ChannelView::Linked, false, None);
 
         assert!(
             !lines[1].contains('['),
@@ -3609,11 +3693,12 @@ mod tests {
         // meter_split_* default (a disjoint variant, distinct from its
         // own seamlessly-connected Unified-view glyph).
         let config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"radiating\"\n\
              peaks = \"auto\"\nchar_set = \"compat\"",
         );
 
-        let lines = render_node_lines(&config, &node, false, false, None);
+        let lines =
+            render_node_lines(&config, &node, ChannelView::Linked, false, None);
         assert_eq!(lines.len(), 3); // header + 1 pair row + 1 single row
 
         let split_active =
@@ -3658,7 +3743,7 @@ mod tests {
         // glyph anywhere in a split view" assertion below for reasons
         // unrelated to what's actually being tested.
         let config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"radiating\"\n\
              peaks = \"auto\"\n\
              char_set = \"test\"\n\
              [char_sets.test]\n\
@@ -3678,14 +3763,19 @@ mod tests {
         );
 
         // Lone stereo pair (plain FL/FR, no third channel) - this is
-        // MeterWidget's own whole-node meter, but channel_display =
-        // "always" puts it in Linked view, so it must pick up the
+        // MeterWidget's own whole-node meter, but initial_view =
+        // "linked" puts it in Linked view, so it must pick up the
         // meter_split_* override too.
         let mut classic_node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
         classic_node.peaks =
             Some(Arc::from([AtomicF32::new(1.0), AtomicF32::new(1.0)]));
-        let classic_lines =
-            render_node_lines(&config, &classic_node, false, false, None);
+        let classic_lines = render_node_lines(
+            &config,
+            &classic_node,
+            ChannelView::Linked,
+            false,
+            None,
+        );
         // [header, blank spacer, bar+meter] - the classic path leaves a
         // blank spacer line between its header and bar rows.
         assert!(classic_lines[2].contains(split_glyph));
@@ -3701,8 +3791,13 @@ mod tests {
             AtomicF32::new(1.0),
             AtomicF32::new(1.0),
         ]));
-        let split_lines =
-            render_node_lines(&config, &split_node, false, false, None);
+        let split_lines = render_node_lines(
+            &config,
+            &split_node,
+            ChannelView::Linked,
+            false,
+            None,
+        );
         assert_eq!(split_lines.len(), 3); // header + pair row + single row
         assert!(split_lines[1].contains(split_glyph));
         assert!(split_lines[2].contains(split_glyph));
@@ -3711,9 +3806,9 @@ mod tests {
     #[test]
     fn meter_split_overrides_do_not_apply_in_unified_view() {
         // The same lone-pair node and meter_split_* override as above,
-        // but without channel_display = "always" - default
-        // channel_display is "unified", so the node's meter stays in
-        // Unified view and must keep rendering with the stock glyph,
+        // but without initial_view = "linked" - default initial_view is
+        // "unified", so the node's meter stays in Unified view and must
+        // keep rendering with the stock glyph,
         // regardless of what meter_split_* is configured to.
         use crate::atomic_f32::AtomicF32;
         use std::sync::Arc;
@@ -3734,7 +3829,13 @@ mod tests {
         let mut node = test_node(Some(vec![fl, fr]), vec![1.0, 1.0]);
         node.peaks =
             Some(Arc::from([AtomicF32::new(1.0), AtomicF32::new(1.0)]));
-        let lines = render_node_lines(&config, &node, false, false, None);
+        let lines = render_node_lines(
+            &config,
+            &node,
+            ChannelView::Unified,
+            false,
+            None,
+        );
 
         assert!(lines[2].contains(stock_glyph));
         assert!(!lines[2].contains(split_glyph));
@@ -3752,7 +3853,7 @@ mod tests {
         let aux0 = libspa_sys::SPA_AUDIO_CHANNEL_AUX0;
         let aux1 = libspa_sys::SPA_AUDIO_CHANNEL_AUX1;
 
-        // channel_display = "always" so the pair and AUX nodes actually
+        // initial_view = "linked" so the pair and AUX nodes actually
         // split; a 1-channel node is always Unified regardless, so the
         // same config works for all three. max_volume_percent = 100 so a
         // raw volume of 1.0 fully saturates every bar (the default 150
@@ -3765,7 +3866,7 @@ mod tests {
         // setting deliberately trades away when on (see its own doc
         // comment).
         let config = config::Config::from_toml_str(
-            "channel_display = \"always\"\nsplit_style = \"radiating\"\n\
+            "initial_view = \"linked\"\nsplit_style = \"radiating\"\n\
              peaks = \"off\"\nmax_volume_percent = 100.0\n\
              expand_unused_label_space = false",
         );
@@ -3778,16 +3879,31 @@ mod tests {
         };
 
         let unified_node = test_node(Some(vec![mono]), vec![1.0]);
-        let unified_lines =
-            render_node_lines(&config, &unified_node, false, false, None);
+        let unified_lines = render_node_lines(
+            &config,
+            &unified_node,
+            ChannelView::Linked,
+            false,
+            None,
+        );
 
         let radiating_node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
-        let radiating_lines =
-            render_node_lines(&config, &radiating_node, false, false, None);
+        let radiating_lines = render_node_lines(
+            &config,
+            &radiating_node,
+            ChannelView::Linked,
+            false,
+            None,
+        );
 
         let stacked_node = test_node(Some(vec![aux0, aux1]), vec![1.0, 0.0]);
-        let stacked_lines =
-            render_node_lines(&config, &stacked_node, false, false, None);
+        let stacked_lines = render_node_lines(
+            &config,
+            &stacked_node,
+            ChannelView::Linked,
+            false,
+            None,
+        );
 
         let unified_start = bar_start(&unified_lines);
         let radiating_start = bar_start(&radiating_lines);
@@ -3819,15 +3935,15 @@ mod tests {
         let aux1 = libspa_sys::SPA_AUDIO_CHANNEL_AUX1;
 
         let default_config = config::Config::from_toml_str(
-            "channel_display = \"always\"\npeaks = \"auto\"\n\
+            "initial_view = \"linked\"\npeaks = \"auto\"\n\
              char_set = \"compat\"",
         );
         let narrow_meter_config = config::Config::from_toml_str(
-            "channel_display = \"always\"\npeaks = \"auto\"\n\
+            "initial_view = \"linked\"\npeaks = \"auto\"\n\
              char_set = \"compat\"\n\
              [linked_meter_layout]\nmeter_width_percent = 25.0",
         );
-        // channel_display = "always" puts every node in Linked view, so
+        // initial_view = "linked" puts every node in Linked view, so
         // both the classic mono node and the Stacked block's row render
         // with the meter_split_* glyph, not the stock one.
         let meter_glyph = default_config
@@ -3848,14 +3964,14 @@ mod tests {
         let default_unified_start = meter_start(&render_node_lines(
             &default_config,
             &unified_node,
-            false,
+            ChannelView::Linked,
             false,
             None,
         ));
         let narrow_unified_start = meter_start(&render_node_lines(
             &narrow_meter_config,
             &unified_node,
-            false,
+            ChannelView::Linked,
             false,
             None,
         ));
@@ -3868,14 +3984,14 @@ mod tests {
         let default_stacked_start = meter_start(&render_node_lines(
             &default_config,
             &stacked_node,
-            false,
+            ChannelView::Linked,
             false,
             None,
         ));
         let narrow_stacked_start = meter_start(&render_node_lines(
             &narrow_meter_config,
             &stacked_node,
-            false,
+            ChannelView::Linked,
             false,
             None,
         ));
@@ -3905,18 +4021,28 @@ mod tests {
         };
 
         let no_margin_config = config::Config::from_toml_str(
-            "channel_display = \"always\"\npeaks = \"auto\"\n\
+            "initial_view = \"linked\"\npeaks = \"auto\"\n\
              [linked_meter_layout]\nright_margin = 0",
         );
         let wide_margin_config = config::Config::from_toml_str(
-            "channel_display = \"always\"\npeaks = \"auto\"\n\
+            "initial_view = \"linked\"\npeaks = \"auto\"\n\
              [linked_meter_layout]\nright_margin = 10",
         );
 
-        let no_margin_lines =
-            render_node_lines(&no_margin_config, &node, false, false, None);
-        let wide_margin_lines =
-            render_node_lines(&wide_margin_config, &node, false, false, None);
+        let no_margin_lines = render_node_lines(
+            &no_margin_config,
+            &node,
+            ChannelView::Linked,
+            false,
+            None,
+        );
+        let wide_margin_lines = render_node_lines(
+            &wide_margin_config,
+            &node,
+            ChannelView::Linked,
+            false,
+            None,
+        );
 
         assert!(
             last_used_column(&no_margin_lines)

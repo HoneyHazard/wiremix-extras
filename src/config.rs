@@ -44,30 +44,24 @@ pub struct Config {
     pub tab: usize,
     pub tabs: Vec<TabKind>,
     pub lazy_capture: bool,
-    /// Whether a node's volume is ever shown as more than one bar/row when
-    /// its setting is linked (ganged) - "unified" (always one) or
-    /// "always" (always split, per `split_style`). See `unified_imbalance`
-    /// for how an imbalanced node is indicated while this is "unified".
-    /// Independent of `channel_mode`, which always forces a split,
-    /// individually-cursored display regardless of this setting.
-    pub channel_display: ChannelDisplay,
-    /// Only consulted when `channel_display` is "unified": how an
+    /// Which of the three views (see `ChannelView`) the app starts in.
+    /// `Action::SelectView`/`Action::CycleView` (bound to `Space` by
+    /// default) change this at runtime; this is only the startup value.
+    /// See `unified_imbalance` for how an imbalanced node is indicated
+    /// without leaving `Unified`.
+    pub initial_view: ChannelView,
+    /// Only consulted while the current view is `Unified`: how an
     /// imbalanced node (channels that don't all hold the same value) is
     /// indicated without actually splitting the whole list's display.
     pub unified_imbalance: UnifiedImbalance,
     /// Rendering style whenever a node's volume actually is split
-    /// (`channel_display = "always"`, `unified_imbalance = "split"`
-    /// triggering for one imbalanced node, or `channel_mode` being on).
+    /// (view is `Linked`/`Channels`, or `unified_imbalance = "split"`
+    /// triggering for one imbalanced node while otherwise `Unified`).
     /// "radiating" renders a lone simple pair on one fixed-height row;
     /// anything with more channels (extra singles alongside a pair, more
     /// than one pair, or no pair at all) gets one row per detected
     /// pair/channel instead, each pair still radiating on its own row.
     pub split_style: SplitStyle,
-    /// Initial value of the "Channel mode" setting axis (linked vs
-    /// individual - see `Action::ToggleChannelMode`). Independent of
-    /// `channel_display`/`unified_imbalance`/`split_style`, which
-    /// control *display*, not which channels an adjustment affects.
-    pub channel_mode: bool,
     /// How a radiating pair row (split_style = "radiating") labels which
     /// physical pair it's showing - only matters once more than one row
     /// can appear in the same node's split display (a lone pair takes
@@ -223,14 +217,12 @@ struct ConfigFile {
     tabs: Vec<TabKind>,
     #[serde(default = "default_lazy_capture")]
     lazy_capture: bool,
-    #[serde(default = "default_channel_display")]
-    channel_display: Option<ChannelDisplay>,
+    #[serde(default = "default_initial_view")]
+    initial_view: Option<ChannelView>,
     #[serde(default = "default_unified_imbalance")]
     unified_imbalance: Option<UnifiedImbalance>,
     #[serde(default = "default_split_style")]
     split_style: Option<SplitStyle>,
-    #[serde(default = "default_channel_mode")]
-    channel_mode: bool,
     #[serde(default = "default_pair_label_style")]
     pair_label_style: Option<PairLabelStyle>,
     #[serde(default = "default_view_cycle")]
@@ -256,16 +248,6 @@ pub enum Peaks {
     Mono,
     #[default]
     Auto,
-}
-
-#[derive(
-    Deserialize, Default, Debug, Clone, Copy, PartialEq, clap::ValueEnum,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum ChannelDisplay {
-    #[default]
-    Unified,
-    Always,
 }
 
 #[derive(
@@ -299,16 +281,19 @@ pub enum PairLabelStyle {
     Short,
 }
 
-/// One of the three high-level ways the object list can display and
-/// target a node's volume - a convenience wrapper over `channel_mode`/
-/// `channel_display`, derived from them rather than stored as separate
-/// state (see `ObjectList::channel_view`), used only for `Action::
-/// SelectView`/`Action::CycleView` and `Config::view_cycle`.
-/// "unified" = `channel_mode = false`, `channel_display = "unified"`
-/// (one collapsed bar/row). "linked" = `channel_mode = false`,
-/// `channel_display = "always"` (always split, but volume keys still
-/// adjust every channel together). "channels" = `channel_mode = true`
-/// (always split, volume keys target only the cursored channel).
+/// The one high-level axis that decides both how a node's volume is
+/// displayed and which channels a volume key adjusts - stored directly
+/// as `ObjectList::view` (runtime) and `Config::initial_view` (startup),
+/// not derived from separate booleans. "unified" = one collapsed
+/// bar/row per node, a volume key adjusts the whole node (see
+/// `Config::unified_imbalance` for how an imbalanced node is still
+/// flagged without splitting). "linked" = every channel gets its own
+/// row, but a volume key still adjusts the whole node at once - a
+/// relative key applies the same delta to each channel's own value
+/// (preserving any existing imbalance), an absolute key sets every
+/// channel to that same value. "channels" = same split display, but a
+/// volume key targets only the individually-cursored channel, leaving
+/// every other channel exactly as it was.
 #[derive(
     Deserialize,
     Default,
@@ -328,39 +313,19 @@ pub enum ChannelView {
     Channels,
 }
 
-/// Bundles the independent axes that decide how a node's volume is
-/// displayed/set, so functions that need all of them (mainly
-/// `NodeWidget`/its height calculation) don't need a separate parameter
-/// per axis. `channel_mode` and `channel_display` are runtime-mutable
-/// (see `ObjectList`); `unified_imbalance`/`split_style`/
-/// `pair_label_style` currently aren't (no toggle action yet -
-/// config-only), but live here alongside the others so adding one later
+/// Bundles the axes that decide how a node's volume is displayed/set, so
+/// functions that need all of them (mainly `NodeWidget`/its height
+/// calculation) don't need a separate parameter per axis. `view` is
+/// runtime-mutable (see `ObjectList::view`); `unified_imbalance`/
+/// `split_style`/`pair_label_style` currently aren't (no toggle action
+/// yet - config-only), but live here alongside it so adding one later
 /// doesn't change this bundle's shape.
 #[derive(Debug, Clone, Copy)]
 pub struct ChannelState {
-    pub channel_mode: bool,
-    pub channel_display: ChannelDisplay,
+    pub view: ChannelView,
     pub unified_imbalance: UnifiedImbalance,
     pub split_style: SplitStyle,
     pub pair_label_style: PairLabelStyle,
-}
-
-impl ChannelState {
-    /// The `ChannelView` this state amounts to - see `ChannelView`'s own
-    /// doc comment for the exact mapping. Used both by `ObjectList`
-    /// (`Action::CycleView`'s notion of "current view") and by
-    /// `node_widget` (to decide whether a row should use `Unified`
-    /// view's stock-identical layout or the aligned/aggressive one
-    /// shared by `Linked`/`Channels`).
-    pub fn view(&self) -> ChannelView {
-        if self.channel_mode {
-            ChannelView::Channels
-        } else if self.channel_display == ChannelDisplay::Always {
-            ChannelView::Linked
-        } else {
-            ChannelView::Unified
-        }
-    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -557,8 +522,8 @@ fn default_lazy_capture() -> bool {
     false
 }
 
-fn default_channel_display() -> Option<ChannelDisplay> {
-    Some(ChannelDisplay::default())
+fn default_initial_view() -> Option<ChannelView> {
+    Some(ChannelView::default())
 }
 
 fn default_unified_imbalance() -> Option<UnifiedImbalance> {
@@ -567,10 +532,6 @@ fn default_unified_imbalance() -> Option<UnifiedImbalance> {
 
 fn default_split_style() -> Option<SplitStyle> {
     Some(SplitStyle::default())
-}
-
-fn default_channel_mode() -> bool {
-    false
 }
 
 fn default_expand_unused_label_space() -> bool {
@@ -652,8 +613,8 @@ impl ConfigFile {
             self.lazy_capture = true;
         }
 
-        if let Some(channel_display) = &opt.channel_display {
-            self.channel_display = Some(*channel_display);
+        if let Some(initial_view) = &opt.initial_view {
+            self.initial_view = Some(*initial_view);
         }
 
         if let Some(unified_imbalance) = &opt.unified_imbalance {
@@ -662,14 +623,6 @@ impl ConfigFile {
 
         if let Some(split_style) = &opt.split_style {
             self.split_style = Some(*split_style);
-        }
-
-        if opt.no_channel_mode {
-            self.channel_mode = false;
-        }
-
-        if opt.channel_mode {
-            self.channel_mode = true;
         }
 
         if let Some(pair_label_style) = &opt.pair_label_style {
@@ -757,12 +710,11 @@ impl TryFrom<ConfigFile> for Config {
             tab,
             tabs: config_file.tabs,
             lazy_capture: config_file.lazy_capture,
-            channel_display: config_file.channel_display.unwrap_or_default(),
+            initial_view: config_file.initial_view.unwrap_or_default(),
             unified_imbalance: config_file
                 .unified_imbalance
                 .unwrap_or_default(),
             split_style: config_file.split_style.unwrap_or_default(),
-            channel_mode: config_file.channel_mode,
             pair_label_style: config_file.pair_label_style.unwrap_or_default(),
             view_cycle: config_file.view_cycle,
             unified_meter_layout,
@@ -866,10 +818,9 @@ pub mod strict {
         tab: Option<TabKind>,
         tabs: Vec<TabKind>,
         lazy_capture: bool,
-        channel_display: Option<ChannelDisplay>,
+        initial_view: Option<ChannelView>,
         unified_imbalance: Option<UnifiedImbalance>,
         split_style: Option<SplitStyle>,
-        channel_mode: bool,
         pair_label_style: Option<PairLabelStyle>,
         view_cycle: Vec<ChannelView>,
         unified_meter_layout: MeterLayoutFile,
@@ -898,10 +849,9 @@ pub mod strict {
                 tab: strict.tab,
                 tabs: strict.tabs,
                 lazy_capture: strict.lazy_capture,
-                channel_display: strict.channel_display,
+                initial_view: strict.initial_view,
                 unified_imbalance: strict.unified_imbalance,
                 split_style: strict.split_style,
-                channel_mode: strict.channel_mode,
                 pair_label_style: strict.pair_label_style,
                 view_cycle: strict.view_cycle,
                 unified_meter_layout: strict.unified_meter_layout,
@@ -1014,30 +964,10 @@ mod tests {
     }
 
     #[test]
-    fn keybinding_toggle_channel_mode() {
-        let config = r#"
-        key = { Char = " " }
-        action = "ToggleChannelMode"
-        "#;
-        let keybinding: Keybinding = toml::from_str(config).unwrap();
-        assert_eq!(keybinding.action, Action::ToggleChannelMode);
-    }
-
-    #[test]
-    fn keybinding_cycle_channel_display() {
-        let config = r#"
-        key = { Char = "v" }
-        action = "CycleChannelDisplay"
-        "#;
-        let keybinding: Keybinding = toml::from_str(config).unwrap();
-        assert_eq!(keybinding.action, Action::CycleChannelDisplay);
-    }
-
-    #[test]
-    fn channel_display_parses_from_toml() {
+    fn initial_view_parses_from_toml() {
         let config: ConfigFile =
-            toml::from_str("channel_display = \"always\"").unwrap();
-        assert_eq!(config.channel_display, Some(ChannelDisplay::Always));
+            toml::from_str("initial_view = \"linked\"").unwrap();
+        assert_eq!(config.initial_view, Some(ChannelView::Linked));
     }
 
     #[test]
@@ -1052,12 +982,6 @@ mod tests {
         let config: ConfigFile =
             toml::from_str("split_style = \"stacked\"").unwrap();
         assert_eq!(config.split_style, Some(SplitStyle::Stacked));
-    }
-
-    #[test]
-    fn channel_mode_parses_from_toml() {
-        let config: ConfigFile = toml::from_str("channel_mode = true").unwrap();
-        assert!(config.channel_mode);
     }
 
     #[test]
