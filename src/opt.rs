@@ -92,6 +92,11 @@ pub struct Opt {
     #[clap(long, value_parser = clap::value_parser!(config::UnifiedImbalance))]
     pub unified_imbalance: Option<config::UnifiedImbalance>,
 
+    /// How long --unified-imbalance=cycle shows each channel before
+    /// advancing to the next one, in seconds. Ignored otherwise
+    #[clap(long, value_name = "SECONDS")]
+    pub unified_imbalance_cycle_seconds: Option<f32>,
+
     /// Rendering style whenever a node's volume actually is split:
     /// "radiating" (a lone simple pair gets one row with two bars growing
     /// from a shared center marker; anything with more channels - extra
