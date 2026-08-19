@@ -255,10 +255,7 @@ impl CharSet {
             (String::from("default"), CharSet::default()),
             (String::from("compat"), CharSet::compat()),
             (String::from("extracompat"), CharSet::extracompat()),
-            (
-                String::from("redshift_compat"),
-                CharSet::redshift_compat(),
-            ),
+            (String::from("redshift_compat"), CharSet::redshift_compat()),
         ])
     }
 

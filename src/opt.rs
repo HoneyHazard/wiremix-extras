@@ -130,13 +130,13 @@ pub struct Opt {
     #[clap(long, conflicts_with = "no_capture_hidden")]
     pub capture_hidden: bool,
 
-    /// Whether a node's volume is ever shown as more than one bar/row when
-    /// its setting is linked - "unified" (always one, see
-    /// --unified-imbalance) or "always" (always split, see --split-style)
-    #[clap(long, value_parser = clap::value_parser!(config::ChannelDisplay))]
-    pub channel_display: Option<config::ChannelDisplay>,
+    /// Which of the three views ("unified", "linked", "channels") the
+    /// app starts in - see --unified-imbalance for how an imbalanced
+    /// node is still flagged without leaving "unified"
+    #[clap(long, value_parser = clap::value_parser!(config::ChannelView))]
+    pub initial_view: Option<config::ChannelView>,
 
-    /// When --channel-display=unified, how an imbalanced node (channels
+    /// When --initial-view=unified, how an imbalanced node (channels
     /// that don't all hold the same value) is indicated without actually
     /// splitting the display: "none" (no indication), "cycle" (briefly
     /// cycle through each channel's own label+value), or "split" (that one
@@ -153,17 +153,6 @@ pub struct Opt {
     /// regardless of pairing)
     #[clap(long, value_parser = clap::value_parser!(config::SplitStyle))]
     pub split_style: Option<config::SplitStyle>,
-
-    /// Start with volume keys adjusting every channel of the selected node
-    /// together (linked/ganged) - the default
-    #[clap(long, conflicts_with = "channel_mode")]
-    pub no_channel_mode: bool,
-
-    /// Start with volume keys adjusting only the individually-cursored
-    /// channel of the selected node ("Channel mode" - see
-    /// ToggleChannelMode)
-    #[clap(long, conflicts_with = "no_channel_mode")]
-    pub channel_mode: bool,
 
     /// How a radiating pair row labels which physical pair it's showing,
     /// once more than one row can appear in the same node's split display

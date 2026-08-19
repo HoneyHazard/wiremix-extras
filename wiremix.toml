@@ -107,21 +107,25 @@ lenient_config = false
 # monitoring rules as regular ones.
 capture_hidden = true
 
-# Whether a node's volume is ever shown as more than one bar/row when its
-# setting is linked/ganged (see channel_mode below for the individual
-# setting axis, which is independent of this):
-# "unified" - always exactly one bar/row (today's default). See
-#   unified_imbalance below for how a node whose channels currently hold
-#   different values is indicated while collapsed like this.
-# "always" - always split (see split_style), never collapses to one
-#   bar/row.
-# Toggle live with the "ToggleChannelDisplay" action (unbound by
-# default) - cycles unified -> always -> unified.
-channel_display = "unified"
+# Which of the three views the app starts in - Space steps through them
+# live (see view_cycle below), this only picks the startup one:
+# "unified" - one collapsed bar/row per node (today's default). A volume
+#   key adjusts the whole node. See unified_imbalance below for how a
+#   node whose channels currently hold different values is still
+#   indicated without leaving this view.
+# "linked" - every node's channels get their own row, but a volume key
+#   still adjusts the whole node at once: a relative key (h/l, Left/
+#   Right) applies the same delta to each channel's own value, preserving
+#   whatever imbalance they already had; an absolute key (0-9) sets every
+#   channel to that same value.
+# "channels" - same split display as "linked", but a volume key targets
+#   only the individually-cursored channel, leaving every other channel
+#   exactly as it was.
+initial_view = "unified"
 
-# Only consulted when channel_display = "unified" - how a node whose
+# Only consulted while the current view is "unified" - how a node whose
 # channels currently hold different values is indicated without actually
-# switching the whole session to "always":
+# leaving that collapsed view:
 # "none" - no indication, just the mean (today's default, and the only
 #   behavior stock wiremix has ever had).
 # "cycle" - stay collapsed to one bar/row, but temporally cycle the
@@ -133,9 +137,9 @@ channel_display = "unified"
 #   bar/row.
 unified_imbalance = "none"
 
-# Rendering style whenever a node's volume actually is split
-# (channel_display = "always", unified_imbalance = "split" triggering for
-# a currently-imbalanced node, or channel_mode = true - see below):
+# Rendering style whenever a node's volume actually is split (view is
+# "linked"/"channels", or unified_imbalance = "split" triggering for a
+# currently-imbalanced node while otherwise "unified"):
 # "radiating" - a node with exactly one simple stereo (or other named
 #   left/right) pair and nothing else gets a single row with two bars
 #   growing outward from a shared center marker. A node with more going
@@ -159,27 +163,11 @@ split_style = "radiating"
 # "short" - just the group name, e.g. "F", "R".
 pair_label_style = "verbose"
 
-# Which of the three high-level views ("unified" - one collapsed bar/row,
-# channel_mode = false, channel_display = "unified"; "linked" - always
-# split but volume keys still adjust every channel together, channel_mode
-# = false, channel_display = "always"; "channels" - always split, volume
-# keys target only the cursored channel, channel_mode = true)
-# Action::CycleView steps through, and in what order. Removing one
-# excludes it from cycling without disabling it entirely - it's still
-# reachable directly via Action::SelectView. Must be non-empty.
+# Which views Action::CycleView (bound to Space by default) steps
+# through, and in what order. Removing one excludes it from cycling
+# without disabling it entirely - it's still reachable directly via
+# Action::SelectView. Must be non-empty.
 view_cycle = [ "unified", "linked", "channels" ]
-
-# Whether volume keys (h/l, Left/Right, 0-9, etc.) adjust every channel
-# of the selected item together (false, linked/ganged - today's default)
-# or only the individually-cursored channel (true, "Channel mode").
-# Independent of channel_display/unified_imbalance/split_style, which
-# control *display*, not which channels an adjustment affects - though
-# channel_mode = true always renders split (stacked), regardless of
-# those settings. Toggle live with the "ToggleChannelMode" action
-# (unbound by default - Space is bound to "CycleView" instead, the
-# higher-level action this and channel_display are both folded into,
-# see the Keybindings section below).
-channel_mode = false
 
 # A lone stereo pair's row never shows a group label at all (unlike a
 # multi-row block's own rows) - shrink its label area down to just what
@@ -301,7 +289,7 @@ keybindings = [
  # together) -> "channels" (always split, volume keys target only the
  # cursored channel) -> back to "unified".
  { key = { Char = " " }, action = "CycleView" },
- # There are seven actions which don't have default bindings:
+ # There are five actions which don't have default bindings:
  # 1. "Nothing": Do nothing - can effectively delete a default keybinding
  # 2. { SelectTab = N }: Open the Nth tab
  # 3. { SetChannelAbsoluteVolume = [N, volume] }: Set the volume of just
@@ -313,11 +301,6 @@ keybindings = [
  #    of the three views "CycleView" above steps through, regardless of
  #    view_cycle - e.g. a dedicated key straight to "channels" without
  #    cycling through "linked" first
- # 6. "ToggleChannelMode"/"CycleChannelDisplay": The two lower-level axes
- #    "CycleView"/"SelectView" are built from - toggling "Channel mode"
- #    (individual per-channel targeting) and cycling channel_display
- #    (unified/always) independently, for anyone who wants that two-axis
- #    control instead of three named views
  #
  # For example, to control the two channels of a stereo pair
  # independently with Ctrl+Left/Right (channel 0) and Ctrl+Up/Down
