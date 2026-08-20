@@ -178,12 +178,6 @@ fn display_rows(
     }
 }
 
-/// How long each channel is shown before `unified_imbalance = "cycle"`
-/// advances to the next one. Not user-configurable yet (see
-/// `NOTES-multichannel.md` §10) - a reasonable fixed value for a first
-/// version, in the 0.5-2s range floated during design.
-const CYCLE_INTERVAL_SECONDS: f32 = 1.5;
-
 /// Splits a bar/meter row into its `volume_area` and `meter_area` for a
 /// given view's `MeterLayout`. The volume:meter ratio (`meter_width_percent`,
 /// or stock's own `4:4` when unset) is applied first, as a pure two-way
@@ -258,9 +252,7 @@ fn peaks_off_volume_area(area: Rect, layout: MeterLayout) -> Rect {
 /// per-node phase offset derived from the node's own object ID (so
 /// imbalanced nodes don't all flip in lockstep) - no stored "last switch
 /// time" field anywhere, matching how `positions`/`volumes` are already
-/// read fresh from `view::Node` every render rather than cached. See
-/// NOTES-multichannel.md §7.2/§10 for why this shape was chosen over
-/// explicit per-node stored state.
+/// read fresh from `view::Node` every render rather than cached.
 fn cycling_channel(
     channel_state: ChannelState,
     node: &view::Node,
@@ -281,8 +273,9 @@ fn cycling_channel(
     // landing at a different *phase*, so a list full of imbalanced nodes
     // doesn't read as one uniform flashing block.
     let phase = (u32::from(node.object_id) % 997) as f32 / 997.0;
-    let position =
-        elapsed_seconds / CYCLE_INTERVAL_SECONDS + phase * channel_count as f32;
+    let position = elapsed_seconds
+        / channel_state.unified_imbalance_cycle_seconds
+        + phase * channel_count as f32;
     Some(position as usize % channel_count)
 }
 
@@ -2555,6 +2548,8 @@ mod tests {
         let channel_state = ChannelState {
             view: config.initial_view,
             unified_imbalance: config.unified_imbalance,
+            unified_imbalance_cycle_seconds: config
+                .unified_imbalance_cycle_seconds,
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
         };
@@ -2595,6 +2590,8 @@ mod tests {
         let channel_state = ChannelState {
             view,
             unified_imbalance: config.unified_imbalance,
+            unified_imbalance_cycle_seconds: config
+                .unified_imbalance_cycle_seconds,
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
         };
@@ -2627,6 +2624,8 @@ mod tests {
         let channel_state = ChannelState {
             view,
             unified_imbalance: config.unified_imbalance,
+            unified_imbalance_cycle_seconds: config
+                .unified_imbalance_cycle_seconds,
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
         };
@@ -2671,6 +2670,8 @@ mod tests {
         let channel_state = ChannelState {
             view: config.initial_view,
             unified_imbalance: config.unified_imbalance,
+            unified_imbalance_cycle_seconds: config
+                .unified_imbalance_cycle_seconds,
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
         };
@@ -2906,7 +2907,12 @@ mod tests {
         // cbrt(0.5) * 100 ~= 79%, not a 50/50 average of the displayed
         // percentages themselves.
         let node = test_node(Some(vec![fl, fr]), vec![1.0, 0.0]);
-        let config = config::Config::from_toml_str("");
+        // unified_imbalance = "none" - this test is about VolumeWidget's
+        // own averaging math, not cycling (see unified_imbalance_cycle_*
+        // tests for that); without this, the default "cycle" behavior
+        // would show one channel's own raw value instead of the average.
+        let config =
+            config::Config::from_toml_str("unified_imbalance = \"none\"");
 
         let rendered = render_to_string(&config, &node);
 
@@ -3174,6 +3180,7 @@ mod tests {
         ChannelState {
             view,
             unified_imbalance: Default::default(),
+            unified_imbalance_cycle_seconds: 1.5,
             split_style: Default::default(),
             pair_label_style: Default::default(),
         }
@@ -3403,11 +3410,41 @@ mod tests {
 
         let first =
             cycling_channel(state, &node, 0.0).expect("imbalanced node");
-        let later = cycling_channel(state, &node, CYCLE_INTERVAL_SECONDS)
-            .expect("still imbalanced");
+        let later = cycling_channel(
+            state,
+            &node,
+            state.unified_imbalance_cycle_seconds,
+        )
+        .expect("still imbalanced");
         assert_ne!(
             first, later,
             "one full interval later should show the other channel"
+        );
+    }
+
+    #[test]
+    fn cycling_channel_honors_configured_interval() {
+        let fl = libspa_sys::SPA_AUDIO_CHANNEL_FL;
+        let fr = libspa_sys::SPA_AUDIO_CHANNEL_FR;
+        let node = test_node(Some(vec![fl, fr]), vec![0.5, 0.3]);
+
+        let mut state = channel_state(ChannelView::Unified);
+        state.unified_imbalance = UnifiedImbalance::Cycle;
+        state.unified_imbalance_cycle_seconds = 10.0;
+
+        // Half of a much longer configured interval than the 1.5s default
+        // - if the interval weren't actually threaded through, this would
+        // already have wrapped past a full (default-sized) cycle.
+        assert_eq!(
+            cycling_channel(state, &node, 0.0),
+            cycling_channel(state, &node, 5.0),
+            "halfway through a 10s interval should still show the first \
+             channel"
+        );
+        assert_ne!(
+            cycling_channel(state, &node, 0.0),
+            cycling_channel(state, &node, 10.0),
+            "a full 10s interval later should show the other channel"
         );
     }
 

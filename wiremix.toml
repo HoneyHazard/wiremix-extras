@@ -126,16 +126,23 @@ initial_view = "unified"
 # Only consulted while the current view is "unified" - how a node whose
 # channels currently hold different values is indicated without actually
 # leaving that collapsed view:
-# "none" - no indication, just the mean (today's default, and the only
-#   behavior stock wiremix has ever had).
-# "cycle" - stay collapsed to one bar/row, but temporally cycle the
-#   bar+percentage through each channel's own value in turn while they
-#   differ (labeled with the channel's raw index, not its name - "0 79%",
-#   not "FL 79%"). Fixed 1.5s interval for now, not yet configurable.
+# "none" - no indication, just the mean (the only behavior stock wiremix
+#   has ever had).
+# "cycle" (default here) - stay collapsed to one bar/row, but temporally
+#   cycle the bar+percentage through each channel's own value in turn
+#   while they differ (labeled with the channel's raw index, not its
+#   name - "0 79%", not "FL 79%"). See unified_imbalance_cycle_seconds
+#   below for how long each channel is shown.
 # "split" - just that one imbalanced node renders split (see
 #   split_style) while every other, balanced node stays collapsed to one
 #   bar/row.
-unified_imbalance = "none"
+unified_imbalance = "cycle"
+
+# How long unified_imbalance = "cycle" shows each channel before
+# advancing to the next one, in seconds. Ignored otherwise. Actual
+# redraws are only guaranteed at least every ~250ms, so a value well
+# under that won't visibly update any faster than that floor.
+unified_imbalance_cycle_seconds = 1.5
 
 # Rendering style whenever a node's volume actually is split (view is
 # "linked"/"channels", or unified_imbalance = "split" triggering for a

@@ -60,6 +60,9 @@ pub struct ObjectList {
     /// See `Config::unified_imbalance`. Seeded from config; no runtime
     /// toggle yet.
     pub unified_imbalance: UnifiedImbalance,
+    /// See `Config::unified_imbalance_cycle_seconds`. Seeded from config;
+    /// no runtime toggle yet.
+    pub unified_imbalance_cycle_seconds: f32,
     /// See `Config::split_style`. Seeded from config; no runtime toggle
     /// yet.
     pub split_style: SplitStyle,
@@ -158,6 +161,8 @@ impl ObjectList {
         ChannelState {
             view: self.view,
             unified_imbalance: self.unified_imbalance,
+            unified_imbalance_cycle_seconds: self
+                .unified_imbalance_cycle_seconds,
             split_style: self.split_style,
             pair_label_style: self.pair_label_style,
         }

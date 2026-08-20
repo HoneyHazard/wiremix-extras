@@ -61,6 +61,12 @@ pub struct Config {
     /// imbalanced node (channels that don't all hold the same value) is
     /// indicated without actually splitting the whole list's display.
     pub unified_imbalance: UnifiedImbalance,
+    /// How long `unified_imbalance = "cycle"` shows each channel before
+    /// advancing to the next one, in seconds. Ignored otherwise. Actual
+    /// redraws are only guaranteed at least every ~250ms (see
+    /// `App::CYCLING_WAKEUP_INTERVAL`), so a value well under that won't
+    /// visibly update any faster than that floor.
+    pub unified_imbalance_cycle_seconds: f32,
     /// Rendering style whenever a node's volume actually is split
     /// (view is `Linked`/`Channels`, or `unified_imbalance = "split"`
     /// triggering for one imbalanced node while otherwise `Unified`).
@@ -241,6 +247,8 @@ struct ConfigFile {
     initial_view: Option<ChannelView>,
     #[serde(default = "default_unified_imbalance")]
     unified_imbalance: Option<UnifiedImbalance>,
+    #[serde(default = "default_unified_imbalance_cycle_seconds")]
+    unified_imbalance_cycle_seconds: Option<f32>,
     #[serde(default = "default_split_style")]
     split_style: Option<SplitStyle>,
     #[serde(default = "default_pair_label_style")]
@@ -275,8 +283,8 @@ pub enum Peaks {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum UnifiedImbalance {
-    #[default]
     None,
+    #[default]
     Cycle,
     Split,
 }
@@ -344,6 +352,7 @@ pub enum ChannelView {
 pub struct ChannelState {
     pub view: ChannelView,
     pub unified_imbalance: UnifiedImbalance,
+    pub unified_imbalance_cycle_seconds: f32,
     pub split_style: SplitStyle,
     pub pair_label_style: PairLabelStyle,
 }
@@ -580,6 +589,10 @@ fn default_unified_imbalance() -> Option<UnifiedImbalance> {
     Some(UnifiedImbalance::default())
 }
 
+fn default_unified_imbalance_cycle_seconds() -> Option<f32> {
+    Some(1.5)
+}
+
 fn default_split_style() -> Option<SplitStyle> {
     Some(SplitStyle::default())
 }
@@ -714,6 +727,13 @@ impl ConfigFile {
             self.unified_imbalance = Some(*unified_imbalance);
         }
 
+        if let Some(unified_imbalance_cycle_seconds) =
+            &opt.unified_imbalance_cycle_seconds
+        {
+            self.unified_imbalance_cycle_seconds =
+                Some(*unified_imbalance_cycle_seconds);
+        }
+
         if let Some(split_style) = &opt.split_style {
             self.split_style = Some(*split_style);
         }
@@ -797,6 +817,15 @@ impl TryFrom<ConfigFile> for Config {
             }
         }
 
+        if let Some(seconds) = config_file.unified_imbalance_cycle_seconds {
+            if seconds <= 0.0 {
+                anyhow::bail!(
+                    "unified_imbalance_cycle_seconds {seconds} must be \
+                     greater than 0"
+                );
+            }
+        }
+
         let unified_meter_layout = config_file
             .unified_meter_layout
             .validate("unified_meter_layout")?;
@@ -854,6 +883,9 @@ impl TryFrom<ConfigFile> for Config {
             initial_view: config_file.initial_view.unwrap_or_default(),
             unified_imbalance: config_file
                 .unified_imbalance
+                .unwrap_or_default(),
+            unified_imbalance_cycle_seconds: config_file
+                .unified_imbalance_cycle_seconds
                 .unwrap_or_default(),
             split_style: config_file.split_style.unwrap_or_default(),
             pair_label_style: config_file.pair_label_style.unwrap_or_default(),
@@ -966,6 +998,7 @@ pub mod strict {
         capture_hidden: bool,
         initial_view: Option<ChannelView>,
         unified_imbalance: Option<UnifiedImbalance>,
+        unified_imbalance_cycle_seconds: Option<f32>,
         split_style: Option<SplitStyle>,
         pair_label_style: Option<PairLabelStyle>,
         view_cycle: Vec<ChannelView>,
@@ -1006,6 +1039,8 @@ pub mod strict {
                 capture_hidden: strict.capture_hidden,
                 initial_view: strict.initial_view,
                 unified_imbalance: strict.unified_imbalance,
+                unified_imbalance_cycle_seconds: strict
+                    .unified_imbalance_cycle_seconds,
                 split_style: strict.split_style,
                 pair_label_style: strict.pair_label_style,
                 view_cycle: strict.view_cycle,
@@ -1135,6 +1170,27 @@ mod tests {
         let config: ConfigFile =
             toml::from_str("unified_imbalance = \"cycle\"").unwrap();
         assert_eq!(config.unified_imbalance, Some(UnifiedImbalance::Cycle));
+    }
+
+    #[test]
+    fn unified_imbalance_cycle_seconds_parses_from_toml() {
+        let config: ConfigFile =
+            toml::from_str("unified_imbalance_cycle_seconds = 3.0").unwrap();
+        assert_eq!(config.unified_imbalance_cycle_seconds, Some(3.0));
+    }
+
+    #[test]
+    fn unified_imbalance_cycle_seconds_zero_is_error() {
+        let config_file: ConfigFile =
+            toml::from_str("unified_imbalance_cycle_seconds = 0.0").unwrap();
+        assert!(Config::try_from(config_file).is_err());
+    }
+
+    #[test]
+    fn unified_imbalance_cycle_seconds_negative_is_error() {
+        let config_file: ConfigFile =
+            toml::from_str("unified_imbalance_cycle_seconds = -1.0").unwrap();
+        assert!(Config::try_from(config_file).is_err());
     }
 
     #[test]

@@ -359,6 +359,8 @@ impl<'a> App<'a> {
         for tab in &mut tabs {
             tab.list.view = config.initial_view;
             tab.list.unified_imbalance = config.unified_imbalance;
+            tab.list.unified_imbalance_cycle_seconds =
+                config.unified_imbalance_cycle_seconds;
             tab.list.split_style = config.split_style;
             tab.list.pair_label_style = config.pair_label_style;
         }
@@ -1564,6 +1566,7 @@ mod tests {
             capture_hidden: true,
             initial_view: Default::default(),
             unified_imbalance: Default::default(),
+            unified_imbalance_cycle_seconds: Default::default(),
             split_style: Default::default(),
             pair_label_style: Default::default(),
             view_cycle: Default::default(),
@@ -1717,6 +1720,7 @@ mod tests {
             capture_hidden: true,
             initial_view: Default::default(),
             unified_imbalance: Default::default(),
+            unified_imbalance_cycle_seconds: Default::default(),
             split_style: Default::default(),
             pair_label_style: Default::default(),
             view_cycle: Default::default(),
