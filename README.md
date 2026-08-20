@@ -89,24 +89,27 @@ a step further and stays plain-ASCII throughout.
 `main`, in this order — real merges, each keeping its own commit history,
 not squashes. Every step before the last has an open pull request against
 `tsowell/wiremix`; reproducing this build from scratch means merging them
-in the same order.
+in the same order. Each step's `merge` link points at the actual merge
+commit here, in case any conflict against an earlier step needs a
+concrete reference for how it was resolved.
 
-1. [item-dividers](https://github.com/tsowell/wiremix/pull/68)
-2. compact-layout (extends item-dividers; no upstream PR yet)
-3. [fix-capture-stream-disconnect-leak](https://github.com/tsowell/wiremix/pull/69)
-4. [metering-skip-state-persistence](https://github.com/tsowell/wiremix/pull/64)
-5. [lenient-config](https://github.com/tsowell/wiremix/pull/73)
-6. [fkey-tab-shortcuts](https://github.com/tsowell/wiremix/pull/67)
-7. [pgup-pgdown-navigation](https://github.com/tsowell/wiremix/pull/65)
-8. [max-concurrent-captures](https://github.com/tsowell/wiremix/pull/66) /
-   [max-concurrent-captures-global](https://github.com/tsowell/wiremix/pull/70)
+1. [item-dividers](https://github.com/tsowell/wiremix/pull/68) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/62e6e48))
+2. compact-layout (extends item-dividers; no upstream PR yet) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/748558a))
+3. [fix-capture-stream-disconnect-leak](https://github.com/tsowell/wiremix/pull/69) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/97c5662))
+4. [metering-skip-state-persistence](https://github.com/tsowell/wiremix/pull/64) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/4fd2a04))
+5. [lenient-config](https://github.com/tsowell/wiremix/pull/73) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/e859fb2))
+6. [fkey-tab-shortcuts](https://github.com/tsowell/wiremix/pull/67) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/38b3e87))
+7. [pgup-pgdown-navigation](https://github.com/tsowell/wiremix/pull/65) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/7ea0ab7))
+8. max-concurrent-captures (closed without merging as #66; its commits are
+   carried directly by the branch below now) /
+   [max-concurrent-captures-global](https://github.com/tsowell/wiremix/pull/70) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/62a7d7a))
 9. [hide-items-instance](https://github.com/tsowell/wiremix/pull/71) /
-   [hide-items-permanent](https://github.com/tsowell/wiremix/pull/72)
-10. [theme-row-selected-text](https://github.com/tsowell/wiremix/pull/63)
+   [hide-items-permanent](https://github.com/tsowell/wiremix/pull/72) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/62e7970))
+10. [theme-row-selected-text](https://github.com/tsowell/wiremix/pull/63) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/db151e6))
 11. dark-theme (a maintained branch in `HoneyHazard/wiremix`; no upstream
-    PR — it's a personal theme, not a proposed default)
-12. [meter-zone-preview](https://github.com/tsowell/wiremix/pull/78)
-13. [multichannel-pairing](https://github.com/tsowell/wiremix/pull/76)
+    PR — it's a personal theme, not a proposed default) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/0343d41))
+12. [meter-zone-preview](https://github.com/tsowell/wiremix/pull/78) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/efdc3f8))
+13. [multichannel-pairing](https://github.com/tsowell/wiremix/pull/76) ([merge](https://github.com/HoneyHazard/wiremix-extras/commit/a0ee7ce))
     — merged last, as it's both the largest change and the one most likely
     to keep evolving. Open as a draft pull request against
     `tsowell/wiremix`.
