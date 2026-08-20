@@ -15,11 +15,11 @@ experience here is very welcome.
 > their way into wiremix itself someday, because it's a truly wonderful
 > tool.
 
-<img src="https://raw.githubusercontent.com/HoneyHazard/wiremix/assets/readme/demo.gif" width="612">
+<img src="./assets/demo.gif" width="612">
 
 *View cycling (`unified`/`linked`/`channels`), per-channel volume control, imbalance display, mute, and hide/unhide - real peak activity throughout.*
 
-<img src="https://raw.githubusercontent.com/HoneyHazard/wiremix/assets/readme/demo-redshift.gif" width="500">
+<img src="./assets/demo-redshift.gif" width="500">
 
 *The same features in the built-in `redshift` theme.*
 
