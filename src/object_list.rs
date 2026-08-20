@@ -48,9 +48,12 @@ pub struct ObjectList {
     /// it only changes on terminal resize and `update()` already recomputes
     /// it every frame from the current area.
     page_size: usize,
-    /// Which of the three views is active - see `ChannelView`. Seeded
-    /// from `Config::initial_view` at startup; changed live via
-    /// `Action::SelectView`/`Action::CycleView`.
+    /// Which of the three `ChannelView`s (unified/linked/channels) is
+    /// active - unrelated to the `view: &view::View` parameter this
+    /// struct's own methods take elsewhere (that one is the live
+    /// PipeWire object-graph snapshot; this field is purely a display/
+    /// input-routing mode). Seeded from `Config::initial_view` at
+    /// startup; changed live via `Action::SelectView`/`Action::CycleView`.
     pub view: ChannelView,
     /// Which channel of the selected node is targeted. Only meaningful
     /// while `view` is `Channels`; `None` otherwise, or whenever the

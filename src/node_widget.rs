@@ -82,9 +82,9 @@ fn is_imbalanced(node: &view::Node) -> bool {
 }
 
 /// What `NodeWidget` should actually show for a node's volume, resolved
-/// from the current channel state and the node's own data. See
-/// `NOTES-multichannel.md` §9's config-restructuring writeup for the
-/// full reasoning behind this precedence.
+/// from the current channel state and the node's own data - see
+/// `volume_display`'s own body for the precedence between the view,
+/// `unified_imbalance`, and `split_style`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum VolumeDisplay {
     /// One combined bar/row - today's stock behavior.
@@ -115,9 +115,10 @@ fn volume_display(
     }
 
     // Channels view (individual setting) always wins: always stacked,
-    // regardless of split_style - radiating's marker-placement problem
-    // for an individually-cursored channel isn't solved yet (see
-    // NOTES-multichannel.md §5/§7.5).
+    // regardless of split_style - a radiating pair's shared center
+    // marker has nowhere unambiguous to show which single channel of
+    // the pair is individually cursored, so Channels view always falls
+    // back to one row per channel instead.
     if channel_state.view == ChannelView::Channels {
         return VolumeDisplay::Stacked;
     }
@@ -2477,6 +2478,8 @@ mod tests {
         let channel_state = ChannelState {
             view: config.initial_view,
             unified_imbalance: config.unified_imbalance,
+            unified_imbalance_cycle_seconds: config
+                .unified_imbalance_cycle_seconds,
             split_style: config.split_style,
             pair_label_style: config.pair_label_style,
         };

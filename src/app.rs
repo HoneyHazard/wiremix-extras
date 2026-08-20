@@ -336,9 +336,9 @@ pub struct App<'a> {
     /// not a wall-clock duration.
     frames_since_rotation: u32,
     /// Fixed reference point for `unified_imbalance = "cycle"`'s
-    /// stateless phase-offset timing (`NOTES-multichannel.md` §7.2/§10) -
-    /// elapsed time since this is recomputed fresh every render, nothing
-    /// else is stored per-node.
+    /// stateless phase-offset timing (see `cycling_channel` in
+    /// `node_widget.rs`) - elapsed time since this is recomputed fresh
+    /// every render, nothing else is stored per-node.
     start_time: Instant,
 }
 
