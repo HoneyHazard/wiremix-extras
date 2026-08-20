@@ -278,9 +278,9 @@ pub struct App<'a> {
     /// Objects currently being captured.
     capturing_objects: HashSet<ObjectId>,
     /// Fixed reference point for `unified_imbalance = "cycle"`'s
-    /// stateless phase-offset timing (`NOTES-multichannel.md` §7.2/§10) -
-    /// elapsed time since this is recomputed fresh every render, nothing
-    /// else is stored per-node.
+    /// stateless phase-offset timing (see `cycling_channel` in
+    /// `node_widget.rs`) - elapsed time since this is recomputed fresh
+    /// every render, nothing else is stored per-node.
     start_time: Instant,
 }
 
