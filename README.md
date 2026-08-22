@@ -58,7 +58,7 @@ experience here is very welcome.
   channel), two ways to flag an imbalanced node without leaving the
   collapsed view (`unified_imbalance = "cycle"` or `"split"`), radiating
   or stacked split layout, and configurable per-view sizing. This is by
-  far the largest change here — see its own section below, and the
+  far the largest change here — see the
   [multichannel-pairing PR](https://github.com/tsowell/wiremix/pull/76)
   for a longer gallery covering each of these individually.
 
